@@ -21,6 +21,8 @@ metadata:
   namespace: research
   labels:
     kueue.x-k8s.io/queue-name: gpu
+  annotations:
+    queen/commit: JOBCOMMIT   # fork commit whose code this Job runs
 spec:
   activeDeadlineSeconds: 172800
   backoffLimit: 1

@@ -4,11 +4,19 @@
 set -euo pipefail
 MODE=${1:?usage: launch.sh smoke|pilot}
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
+# Runs only code that is on the fork (git@github.com:JacobPfau/queen.git), so
+# every run is tied to a pushed commit.
+cd "$REPO"
+git fetch -q fork
+COMMIT=$(git rev-parse HEAD)
+git merge-base --is-ancestor "$COMMIT" fork/master || {
+  echo "HEAD $COMMIT is not on fork/master; push it first" >&2; exit 1; }
 SUFFIX="$MODE-$(date -u +%m%d-%H%M%S)"
 TMP=$(mktemp -d)
-tar --exclude='__pycache__' -czf "$TMP/code.tgz" -C "$REPO" datagen utils models explain configs/explain eval
-cp "$REPO/explain/cluster/run.sh" "$TMP/run.sh"
-sed -e "s/JOBSUFFIX/$SUFFIX/g" -e "s/JOBMODE/$MODE/" "$REPO/explain/cluster/job.yaml" > "$TMP/job.yaml"
+git archive --format=tar.gz -o "$TMP/code.tgz" "$COMMIT" datagen utils models explain configs/explain eval
+git show "$COMMIT:explain/cluster/run.sh" > "$TMP/run.sh"
+git show "$COMMIT:explain/cluster/job.yaml" \
+  | sed -e "s/JOBSUFFIX/$SUFFIX/g" -e "s/JOBMODE/$MODE/" -e "s/JOBCOMMIT/$COMMIT/" > "$TMP/job.yaml"
 kubectl apply -f "$TMP/job.yaml" -l '!kueue.x-k8s.io/queue-name' 2>/dev/null || true   # the PVC
 uid=$(kubectl apply -f "$TMP/job.yaml" -o jsonpath='{.items[1].metadata.uid}')
 kubectl -n research create configmap "pfau-explain-code-$SUFFIX" \

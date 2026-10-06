@@ -52,7 +52,6 @@ fi
 for round in $(seq 1 15); do
   echo "=== round $round $(date -u +%H:%M:%S)"
   $PY -m explain.pilot --config $CFG advance --yes
-  status=$(cat "$WORK/status.json")
   queen=$($PY -c "import json; print(json.load(open('$WORK/status.json'))['queen_pending'])")
   qwen=$($PY -c "import json; print(json.load(open('$WORK/status.json'))['qwen_pending'])")
   if [ "$queen" -gt 0 ]; then
