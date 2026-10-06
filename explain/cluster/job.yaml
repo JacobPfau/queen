@@ -1,0 +1,67 @@
+# Pilot on the resolution-h200 cluster (see ~/Code/timaeus/infra/crusoe/resolution-h200).
+# Launch with explain/cluster/launch.sh, which ships the code as a ConfigMap and
+# sets MODE (smoke | pilot). The PVC persists models, environments and results
+# between runs; every pilot result is cached there, so a rerun resumes.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pfau-explain-pilot
+  namespace: research
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: crusoe-ssd
+  resources:
+    requests:
+      storage: 300Gi
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: pfau-explain-JOBSUFFIX
+  namespace: research
+  labels:
+    kueue.x-k8s.io/queue-name: gpu
+spec:
+  activeDeadlineSeconds: 172800
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 86400
+  template:
+    spec:
+      restartPolicy: Never
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: pfau-explain-pilot
+        - name: code
+          configMap:
+            name: pfau-explain-code-JOBSUFFIX
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 32Gi
+      containers:
+        - name: main
+          # CUDA 13 image: its forward-compatibility libraries let the release's
+          # CUDA 13 wheels run on the nodes' 570 driver.
+          image: nvcr.io/nvidia/cuda:13.0.1-base-ubuntu24.04
+          args: ["bash", "/code/run.sh"]
+          env:
+            - name: MODE
+              value: JOBMODE
+          envFrom:
+            - secretRef:
+                name: pfau-explain-env   # ANTHROPIC_API_KEY, GEMINI_API_KEY
+                optional: true
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: code
+              mountPath: /code
+            - name: shm
+              mountPath: /dev/shm
+          resources:
+            requests:
+              cpu: "16"
+            limits:
+              memory: 225Gi
+              nvidia.com/gpu: 1
