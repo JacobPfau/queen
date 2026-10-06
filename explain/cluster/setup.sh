@@ -34,7 +34,7 @@ done
 
 if ! is_done deps; then
   # The release's pinned inference environment, plus the pilot's own needs.
-  uv pip sync --python "$DATA/venv/bin/python" "$DATA/models/queen_hce-4/requirements-inference.txt"
+  uv pip sync --python "$DATA/venv/bin/python" "$DATA/models/queen_pawn-8/requirements-inference.txt"
   uv pip install --python "$DATA/venv/bin/python" anthropic google-genai PyYAML
   done_ deps
 fi

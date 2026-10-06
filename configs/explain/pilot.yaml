@@ -9,9 +9,11 @@ stockfish: /data/bin/stockfish
 oracle_nodes: 200000
 oracle_workers: 8
 
-# Released Queen checkpoint and its own analysis prompt (inference_config.json).
-queen_model: /data/models/queen_hce-4
-queen_prompt: "Analyze the given chess position, identify the best move, give the critical line assuming best play, list promising moves for deeper investigation, and evaluate the position."
+# Queen = PAWN-8, the paper's final model (2697 Elo; arXiv 2610.03695), with its
+# own prompt from the release's inference_config.json. HCE-4 is the paper's
+# handcrafted-evaluation ablation (at most 2497 Elo).
+queen_model: /data/models/queen_pawn-8
+queen_prompt: "Analyze the position carefully and find the best move for player."
 qwen_model: /data/models/Qwen3.8-27B
 
 max_api_spend_usd: 1500

@@ -4,6 +4,7 @@ Log of design choices for testing whether Queen's explanations help inference-ti
 
 ## Decided by the owner
 
+- **Queen is the paper's final model, PAWN-8.** The owner asked for the best available Queen; the paper (arXiv 2610.03695) names PAWN-8 as the final model at 2697 Elo, while the other release, HCE-4, is its handcrafted-evaluation ablation. Queen runs with its release's own prompt and sampling settings (temperature 0.6, top-k 20, top-p 0.95).
 - **Five-rung input ladder (R0–R4).** The search receives nothing (R0), the candidate-move ranking extracted from the prose (R1), the full prose (R2), Queen's structured heads, meaning best move, PV and eval (R3), or prose plus heads (R4). The heads are the `BEST_MOVE`, `CRITICAL_LINE` and `EVALUATION` text fields that Queen writes after `ANALYSIS`, not separate network heads.
 - **Two readers: Queen and Opus 5.5.** A reader turns prose into a move prior and a value the search can use. Comparing the two on the same text separates what the prose contains from how well a given model can extract it.
 - **Opus ladder (R0′–R4′).** Opus 5.5 receives the same five input levels as the search, with R0′ measuring Opus's chess ability without any Queen output. The R′ arm asks whether Queen's outputs help a frontier model, beyond helping a search.
