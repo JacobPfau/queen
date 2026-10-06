@@ -32,11 +32,11 @@ models:
     effort: medium      # Sonnet 5.5 defaults to high; pinned to match Opus
   flash:
     provider: gemini
-    model: gemini-3.8-flash          # TODO(owner): confirm the model id
-    price_in: null                   # TODO(owner): USD per million input tokens
-    price_out: null                  # TODO(owner): USD per million output tokens
+    model: gemini-3.8-flash          # newest Flash per ai.google.dev pricing, checked 2026-10-06
+    price_in: 0.75                   # promotional rate through 2026-12-31; $1.50 from 2027
+    price_out: 3.75                  # thinking included; doubles from 2027
     effort: medium
-    thinking_levels: {low: low, medium: null, high: high}   # null = provider default
+    thinking_levels: {low: low, medium: medium, high: high}   # medium is also the API default
 
 roles:
   reference_reader: opus          # reads every text; the yardstick for substitutions
