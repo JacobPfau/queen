@@ -2,6 +2,18 @@
 
 One entry per job submitted to the cluster, newest first, written when the job is submitted and updated with its outcome. Budgets: $2k for the pilot, $25k for the whole experiment (`claude/AGENTS.md`).
 
+## pfau-explain-pilot-1007-222925
+
+- **Job:** gpu queue, from JacobPfau/queen@f067dec, submitted 2026-10-07 22:29 UTC.
+- **What it does:** resumes the pilot from its cache with Queen's evaluations read by the direction-aware parser; redoes only work whose inputs changed (R3/R4 prompts, Queen-reader values, full consolidations and what depends on them).
+- **Requests:** 4× H200, 64 CPU, 900Gi memory; storage `pfau-explain-fs` (1Ti crusoe-fs); models and venv on the pod's own disk.
+- **Expected runtime:** 30–60 min, done around 23:00–23:30 UTC; hard limit 48 h.
+- **Expected cost:** ~3 GPU-h; API ~$50–150 more (code cap $1,500).
+- **Budget so far:** $343 API of $2k for the pilot, plus ~8 GPU-h.
+- **Stop it:** `kubectl -n research delete job pfau-explain-pilot-1007-222925`
+- **Cleanup:** the Job and its code ConfigMap are deleted 24 h after finishing; the shared PVC and results are kept.
+- **Outcome:** running.
+
 ## pfau-explain-pilot-1007-215037
 
 - **Job:** gpu queue, from JacobPfau/queen@edfd3ef, submitted 2026-10-07 21:50 UTC.
@@ -12,7 +24,7 @@ One entry per job submitted to the cluster, newest first, written when the job i
 - **Budget so far:** $293 API of $2k for the pilot, plus ~6 GPU-h used (about 3 lost to failed jobs).
 - **Stop it:** `kubectl -n research delete job pfau-explain-pilot-1007-215037`
 - **Cleanup:** the Job and its code ConfigMap are deleted 24 h after finishing; the shared PVC and results are kept.
-- **Outcome:** running.
+- **Outcome:** succeeded at 22:19 UTC (29 min). Redid the 254 cut-off Qwen consolidations (none cut off again), no API failures; total pilot API spend $342.78. Its health section then showed Queen's evaluation signs misread in 62% of analyses, fixed in f067dec.
 
 ## pfau-explain-inspect (2026-10-07 21:5x UTC)
 
