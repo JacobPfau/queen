@@ -46,10 +46,13 @@ fi
 
 if ! is_done stockfish; then
   tmp=$(mktemp -d)
-  curl -LsSf -o "$tmp/sf.tar" \
-    https://github.com/official-stockfish/Stockfish/releases/latest/download/stockfish-ubuntu-x86-64-avx2.tar
-  tar -xf "$tmp/sf.tar" -C "$tmp"
-  install -m 755 "$(find "$tmp" -type f -name 'stockfish-ubuntu-x86-64-avx2' | head -1)" "$DATA/bin/stockfish"
+  # Pinned release, so oracle scores do not change with new Stockfish versions.
+  curl -LsSf -o "$tmp/sf.tar.gz" \
+    https://github.com/official-stockfish/Stockfish/releases/download/sf_19/stockfish-linux-x86-64-universal.tar.gz
+  tar -xzf "$tmp/sf.tar.gz" -C "$tmp"
+  install -m 755 "$(find "$tmp" -type f -name 'stockfish-linux-x86-64-universal*' ! -name '*.tar.gz' | head -1)" \
+    "$DATA/bin/stockfish"
+  echo "uci" | "$DATA/bin/stockfish" | grep -m1 "^id name"
   rm -rf "$tmp"
   done_ stockfish
 fi
