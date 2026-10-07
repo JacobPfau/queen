@@ -12,7 +12,7 @@ One entry per job submitted to the cluster, newest first, written when the job i
 - **Budget so far:** $343 API of $2k for the pilot, plus ~8 GPU-h.
 - **Stop it:** `kubectl -n research delete job pfau-explain-pilot-1007-222925`
 - **Cleanup:** the Job and its code ConfigMap are deleted 24 h after finishing; the shared PVC and results are kept.
-- **Outcome:** running.
+- **Outcome:** succeeded at 22:59 UTC (30 min). Redid the work affected by the parser fix; no API failures. Pilot totals: $409.76 API (Opus $319, Sonnet $58, Flash $32) and ~10 GPU-h, of which ~3 were lost to failed jobs. Report in `results/explain/pilot/`.
 
 ## pfau-explain-pilot-1007-215037
 
@@ -26,9 +26,9 @@ One entry per job submitted to the cluster, newest first, written when the job i
 - **Cleanup:** the Job and its code ConfigMap are deleted 24 h after finishing; the shared PVC and results are kept.
 - **Outcome:** succeeded at 22:19 UTC (29 min). Redid the 254 cut-off Qwen consolidations (none cut off again), no API failures; total pilot API spend $342.78. Its health section then showed Queen's evaluation signs misread in 62% of analyses, fixed in f067dec.
 
-## pfau-explain-inspect (2026-10-07 21:5x UTC)
+## pfau-explain-inspect (2026-10-07, twice: 21:52 and 23:05 UTC)
 
-- CPU-only pod (2 CPU, 8Gi, cpu queue, python:3.12-slim) mounting `pfau-explain-fs` to read the failed run's log and caches; sleeps at most 1 h, no GPU, no API spend.
+- CPU-only pod (2 CPU, 8Gi, cpu queue, python:3.12-slim) mounting `pfau-explain-fs` to read run logs and caches and copy the report off the volume; at most 1 h each, deleted when done; no GPU, no API spend.
 
 ## pfau-explain-pilot-1007-205100
 
