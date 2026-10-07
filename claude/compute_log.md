@@ -2,6 +2,18 @@
 
 One entry per job submitted to the cluster, newest first, written when the job is submitted and updated with its outcome. Budgets: $2k for the pilot, $25k for the whole experiment (`claude/AGENTS.md`).
 
+## pfau-explain-pilot-1007-203643
+
+- **Job:** gpu queue, from JacobPfau/queen@5ca73a9, submitted 2026-10-07 20:36 UTC.
+- **What it does:** runs the pilot end to end on 100 positions as a debugging run (health counts, persistent run logs in `/data/runs/<job>`), with Queen and Qwen requests split across 4 GPUs.
+- **Requests:** 4× H200, 64 CPU, 900Gi memory; storage `pfau-explain-fs` (1Ti crusoe-fs, new); models and venv on the pod's own disk.
+- **Expected runtime:** 1.5–2.5 h including ~15 min of downloads, done around 22:00–23:00 UTC; hard limit 48 h.
+- **Expected cost:** ~6–10 GPU-h; API ~$500 (code cap $1,500; Flash draws on the OpenRouter key's $1k/week limit).
+- **Budget so far:** ~$0.05 of $2k for the pilot, plus ~2.5 GPU-h lost to the stuck job below.
+- **Stop it:** `kubectl -n research delete job pfau-explain-pilot-1007-203643`
+- **Cleanup:** the Job and its code ConfigMap are deleted 24 h after finishing; the shared PVC and results are kept.
+- **Outcome:** running.
+
 ## pfau-explain-pilot-1007-200151
 
 - **Job:** gpu queue, from JacobPfau/queen@5b51f38, submitted 2026-10-07 20:01 UTC.
@@ -12,7 +24,7 @@ One entry per job submitted to the cluster, newest first, written when the job i
 - **Budget so far:** ~$0.05 of $2k for the pilot.
 - **Stop it:** `kubectl -n research delete job pfau-explain-pilot-1007-200151`
 - **Cleanup:** the Job and its code ConfigMap are deleted 24 h after finishing; the PVC and results are kept.
-- **Outcome:** running.
+- **Outcome:** never started. Its pod sat in ContainerCreating for ~33 min (20:01–20:34 UTC) because mounting the crusoe-ssd PVC on a new node failed: the driver tried to reformat the disk (`mke2fs` failed). Deleted by hand; no API spend, but 4 GPUs were held, ~2.2 GPU-h. Replaced by a crusoe-fs volume.
 
 ## pfau-explain-pilot-1007-200046
 
