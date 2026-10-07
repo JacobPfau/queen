@@ -30,7 +30,7 @@ fens = ["rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
         "r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3"]
 rows = [{"key": f"gen{i}", "fen": f, "history": [], "seed": i, "max_tokens": 2048} for i, f in enumerate(fens)]
 rows.append({"key": "read0", "fen": fens[1], "history": [], "seed": 7, "max_tokens": 400,
-             "prefix": "ANALYSIS:\nBlack should develop the knight to f6 and attack e4.\n"})
+             "prefix": "ANALYSIS:\nBlack should develop the knight to f6 and attack e4.\nBEST_MOVE:"})
 write_jsonl("/data/work/smoke/queen_requests.jsonl", rows)
 write_jsonl("/data/work/smoke/qwen_requests.jsonl",
             [{"key": "q0", "system": "Answer briefly.", "user": "Name one chess opening."}])

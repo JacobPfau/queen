@@ -25,11 +25,11 @@ reruns never repeat GPU work or API spend. Expect about four rounds: Queen
 root analyses, Queen child analyses, hybrid writing and consolidation, then
 Queen and external reading.
 
-## Check after the first Queen round
+## Queen as reader
 
-Queen-as-reader pre-fills `ANALYSIS:\n<prose>\n` and lets Queen write the head
-fields. Confirm that Queen's own generations start with `ANALYSIS:` followed
-by a newline; if the format differs, change `Pilot.read_request`.
+Queen reads a text by pre-filling `ANALYSIS:\n<prose>\nBEST_MOVE:` and writing
+the remaining head fields. The smoke test showed that pre-filling only the
+ANALYSIS field lets Queen continue with an analysis of its own.
 
 ## Outputs (in `runs/explain/pilot/`)
 

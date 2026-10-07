@@ -105,7 +105,9 @@ class Pilot:
         return row["text"] if row else None
 
     def read_request(self, fen: str, history: list[str], prose: str) -> dict:
-        prefix = f"ANALYSIS:\n{prose[:QUEEN_PREFIX_CHAR_LIMIT]}\n"
+        # Ending the pre-fill at BEST_MOVE makes Queen commit to a reading of the
+        # given prose; pre-filling only ANALYSIS lets it write its own analysis.
+        prefix = f"ANALYSIS:\n{prose[:QUEEN_PREFIX_CHAR_LIMIT]}\nBEST_MOVE:"
         return {"key": stable_hash(["read", fen, prefix]), "fen": fen, "history": history,
                 "prefix": prefix, "seed": stable_seed("read", fen, prefix),
                 "max_tokens": QUEEN_READ_TOKENS, "truncated": len(prose) > QUEEN_PREFIX_CHAR_LIMIT}
