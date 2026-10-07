@@ -2,6 +2,18 @@
 
 One entry per job submitted to the cluster, newest first, written when the job is submitted and updated with its outcome. Budgets: $2k for the pilot, $25k for the whole experiment (`claude/AGENTS.md`).
 
+## pfau-explain-pilot-1007-200151
+
+- **Job:** gpu queue, from JacobPfau/queen@5b51f38, submitted 2026-10-07 20:01 UTC.
+- **What it does:** runs the explanation-utility pilot end to end on 100 positions and writes the report; Queen and Qwen requests are split across 4 GPUs, one worker per GPU.
+- **Requests:** 4× H200, 64 CPU, 900Gi memory; storage `pfau-explain-pilot` (300Gi crusoe-ssd).
+- **Expected runtime:** 1–2 h, done around 21:00–22:00 UTC; hard limit 48 h.
+- **Expected cost:** ~5 GPU-h (4 GPUs, mostly idle during API rounds); API ~$500 (code cap $1,500; Flash draws on the OpenRouter key's $1k/week limit).
+- **Budget so far:** ~$0.05 of $2k for the pilot.
+- **Stop it:** `kubectl -n research delete job pfau-explain-pilot-1007-200151`
+- **Cleanup:** the Job and its code ConfigMap are deleted 24 h after finishing; the PVC and results are kept.
+- **Outcome:** running.
+
 ## pfau-explain-pilot-1007-200046
 
 - **Job:** gpu queue, from JacobPfau/queen@7b269e8, submitted 2026-10-07 20:00 UTC.
@@ -12,7 +24,7 @@ One entry per job submitted to the cluster, newest first, written when the job i
 - **Budget so far:** ~$0.05 of $2k for the pilot.
 - **Stop it:** `kubectl -n research delete job pfau-explain-pilot-1007-200046`
 - **Cleanup:** the Job and its code ConfigMap are deleted 24 h after finishing; the PVC and results are kept.
-- **Outcome:** running.
+- **Outcome:** stopped by hand at 20:01 UTC during setup, to relaunch on 4 GPUs; no API spend, under 0.05 GPU-h.
 
 ## pfau-explain-pilot-1007-195247
 
