@@ -106,7 +106,7 @@ def run_qwen(args) -> None:
     # Same inference settings as the self-distill consolidation recipe.
     llm = LLM(
         model=str(args.model), tensor_parallel_size=args.tensor_parallel,
-        max_model_len=args.max_model_len, max_num_seqs=16,
+        max_model_len=args.max_model_len, max_num_seqs=64,
         gpu_memory_utilization=args.gpu_memory_utilization, trust_remote_code=True,
         language_model_only=True, enable_prefix_caching=False,
         gdn_prefill_backend="triton",

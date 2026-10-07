@@ -57,7 +57,7 @@ class Pilot:
         specs = {name: ModelSpec(name=name, **spec) for name, spec in self.cfg["models"].items()}
         self.models = list(specs)
         self.llm = Caller(specs, self.dir / "llm_cache.jsonl",
-                          self.cfg["max_api_spend_usd"], self.cfg.get("api_workers", 16))
+                          self.cfg["max_api_spend_usd"], self.cfg.get("api_concurrency"))
         self.writers = self.cfg["roles"]["hybrid_writers"]
         self.consolidators = ["qwen"] + self.cfg["roles"]["external_consolidators"]
         self.judge = self.cfg["roles"]["reference_reader"]   # reads every text

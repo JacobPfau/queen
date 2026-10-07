@@ -61,11 +61,13 @@ class Ledger:
 
 class Caller:
     def __init__(self, specs: dict[str, ModelSpec], cache_path: Path,
-                 max_spend_usd: float, workers: int = 16):
+                 max_spend_usd: float, concurrency: dict[str, int] | None = None):
+        """``concurrency`` caps in-flight calls per model (default 16 each)."""
         self.specs = specs
         self.store = Store(cache_path)
         self.ledger = Ledger(self.store, max_spend_usd)
-        self.workers = workers
+        self.concurrency = {name: (concurrency or {}).get(name, 16) for name in specs}
+        self._slots = {name: threading.Semaphore(n) for name, n in self.concurrency.items()}
         self._clients: dict[str, object] = {}
         self._client_lock = threading.Lock()
 
@@ -232,11 +234,13 @@ class Caller:
         back as ``{"error": "budget"}``.
         """
         def run(request):
-            try:
-                return self.call(**request)
-            except BudgetExceeded:
-                return {"text": "", "error": "budget", "cost_usd": 0.0}
-        with ThreadPoolExecutor(max_workers=self.workers) as pool:
+            with self._slots[request["model"]]:
+                try:
+                    return self.call(**request)
+                except BudgetExceeded:
+                    return {"text": "", "error": "budget", "cost_usd": 0.0}
+        workers = sum(self.concurrency[m] for m in {r["model"] for r in requests}) or 1
+        with ThreadPoolExecutor(max_workers=workers) as pool:
             return list(pool.map(run, requests))
 
     def cached(self, requests: list[dict]) -> int:

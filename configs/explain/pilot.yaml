@@ -17,7 +17,13 @@ queen_prompt: "Analyze the position carefully and find the best move for player.
 qwen_model: /data/models/Qwen3.8-27B
 
 max_api_spend_usd: 1500
-api_workers: 16
+# In-flight API calls per model. Anthropic allows 2M output tokens/min per
+# model (~250 concurrent calls at ~2k output tokens each); 128 is half that.
+# OpenRouter has no request-rate limit on this key, only a $1k/week spend cap.
+api_concurrency:
+  opus: 128
+  sonnet: 128
+  flash: 64
 
 # Opus and Sonnet go direct to Anthropic; Flash goes through OpenRouter, whose
 # reasoning.effort maps to Gemini's thinking level. Prices checked 2026-10-07.
