@@ -1,4 +1,4 @@
-"""External LLM calls (Anthropic, Gemini) with caching and a hard spend cap.
+"""External LLM calls (OpenRouter, Anthropic, Gemini) with caching and a hard spend cap.
 
 Every call is cached in a Store keyed by (model, effort, system, user), so a
 rerun costs nothing. Spend is the sum of recorded call costs; once it reaches
@@ -26,7 +26,7 @@ class BudgetExceeded(RuntimeError):
 @dataclass
 class ModelSpec:
     name: str              # arm label, e.g. "opus"
-    provider: str          # "anthropic" | "gemini"
+    provider: str          # "openrouter" | "anthropic" | "gemini"
     model: str             # API model id
     price_in: float | None # USD per million input tokens
     price_out: float | None  # USD per million output tokens (thinking included)
@@ -109,6 +109,51 @@ class Caller:
             "request_id": getattr(message, "_request_id", None),
         }
 
+    def _openrouter(self, spec: ModelSpec, effort: str, system: str, user: str,
+                    max_tokens: int) -> dict:
+        """One OpenAI-style chat completion through OpenRouter.
+
+        ``reasoning.effort`` maps to Claude's effort and Gemini's thinking level;
+        reasoning tokens are billed as output. OpenRouter reports the charged
+        cost in ``usage.cost``, which is recorded when present.
+        """
+        import httpx
+        response = httpx.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers={"Authorization": f"Bearer {os.environ['OPENROUTER_API_KEY']}"},
+            json={
+                "model": spec.model,
+                "messages": [{"role": "system", "content": system},
+                             {"role": "user", "content": user}],
+                "max_tokens": max_tokens,
+                "reasoning": {"effort": effort},
+                "usage": {"include": True},
+            },
+            timeout=900,
+        )
+        if response.status_code != 200:
+            error = RuntimeError(f"OpenRouter {response.status_code}: {response.text[:300]}")
+            error.status_code = response.status_code
+            raise error
+        data = response.json()
+        if "error" in data:
+            error = RuntimeError(f"OpenRouter error: {str(data['error'])[:300]}")
+            error.status_code = data["error"].get("code") if isinstance(data["error"], dict) else None
+            raise error
+        choice = data["choices"][0]
+        usage = data.get("usage") or {}
+        return {
+            "text": choice["message"].get("content") or "",
+            "stop_reason": "refusal" if choice.get("finish_reason") in ("refusal", "content_filter")
+                           else choice.get("finish_reason"),
+            "tokens_in": usage.get("prompt_tokens", 0),
+            "tokens_out": usage.get("completion_tokens", 0),
+            "reasoning_tokens": (usage.get("completion_tokens_details") or {}).get("reasoning_tokens"),
+            "billed_usd": usage.get("cost"),
+            "provider": data.get("provider"),
+            "request_id": data.get("id"),
+        }
+
     def _gemini(self, spec: ModelSpec, effort: str, system: str, user: str,
                 max_tokens: int) -> dict:
         from google.genai import types
@@ -149,7 +194,8 @@ class Caller:
         if cached is not None and not cached.get("error"):
             return cached  # recorded failures are retried on the next run
         self.ledger.check()
-        call = self._anthropic if spec.provider == "anthropic" else self._gemini
+        call = {"openrouter": self._openrouter, "anthropic": self._anthropic,
+                "gemini": self._gemini}[spec.provider]
         started = time.time()
         last_error = None
         for attempt in range(3):
@@ -171,7 +217,8 @@ class Caller:
                 "error": repr(last_error), "cost_usd": 0.0,
                 "tokens_in": 0, "tokens_out": 0, "seconds": time.time() - started,
             })
-        cost = spec.cost(result["tokens_in"], result["tokens_out"])
+        cost = (result["billed_usd"] if result.get("billed_usd") is not None
+                else spec.cost(result["tokens_in"], result["tokens_out"]))
         self.ledger.add(cost)
         return self.store.put(key, {
             "model": model, "effort": effort, "tag": tag, **result,

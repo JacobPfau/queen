@@ -46,9 +46,12 @@ done
 if ! is_done deps; then
   # The release's pinned inference environment, plus the pilot's own needs.
   uv pip sync --python "$DATA/venv/bin/python" "$DATA/models/queen_pawn-8/requirements-inference.txt"
-  uv pip install --python "$DATA/venv/bin/python" anthropic google-genai PyYAML
+  uv pip install --python "$DATA/venv/bin/python" anthropic google-genai httpx PyYAML
   done_ deps
 fi
+
+"$DATA/venv/bin/python" -c "import httpx" 2>/dev/null \
+  || uv pip install --python "$DATA/venv/bin/python" httpx
 
 if ! is_done model-qwen; then
   "$DATA/venv/bin/hf" download Qwen/Qwen3.8-27B --local-dir "$DATA/models/Qwen3.8-27B"
