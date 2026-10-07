@@ -10,9 +10,14 @@ set -euo pipefail
 JOB=${JOB_NAME:-unknown-job}
 RUNDIR=/data/runs/$JOB
 mkdir -p "$RUNDIR"
+exec 3>&2  # the pod's own stderr, which survives even if tee is killed first
 exec > >(tee -a "$RUNDIR/run.log") 2>&1
 STAGE=start
-trap 'echo "[run] FAILED in stage \"$STAGE\" (line $LINENO, exit $?) at $(date -u +%H:%M:%S)"' ERR
+fail() {
+  local msg="[run] FAILED in stage \"$STAGE\" (line $1, exit $2) at $(date -u +%H:%M:%S)"
+  echo "$msg" >&3; echo "$msg" >> "$RUNDIR/run.log"
+}
+trap 'fail $LINENO $?' ERR
 stage() { STAGE=$1; echo "[run] $(date -u +%H:%M:%S) stage: $1"; }
 echo "[run] job=$JOB pod=${POD_NAME:-?} node=${NODE_NAME:-?} commit=${JOB_COMMIT:-?} mode=${MODE:-pilot}"
 
@@ -103,7 +108,7 @@ gpu_workers() {  # gpu_workers <worker> <round> <model> [extra args...]
   local failed=0
   for pid in "${pids[@]}"; do wait "$pid" || failed=1; done
   for i in $(seq 0 $((NGPU - 1))); do
-    echo "--- ${worker} gpu$i (round $round)"; grep -E "^\[$worker\]|Error|Traceback" "$RUNDIR/${worker}_r${round}_gpu$i.log" | tail -n 4
+    echo "--- ${worker} gpu$i (round $round)"; grep -E "^\[$worker\]|Error|Traceback" "$RUNDIR/${worker}_r${round}_gpu$i.log" | tail -n 4 || true
   done
   echo "[run] $worker round $round took $((SECONDS - started))s on $NGPU GPUs (failed=$failed)"
   merge "$worker"

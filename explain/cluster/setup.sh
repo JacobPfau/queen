@@ -67,5 +67,8 @@ if ! is_done "$DATA" stockfish; then
   rm -rf "$tmp"
   done_ "$DATA" stockfish
 fi
-echo "uci" | "$DATA/bin/stockfish" | grep -m1 "^id name"
+# Capture first, then grep: piping into `grep -m1` makes Stockfish die of
+# SIGPIPE, which pipefail turns into a setup failure.
+sf_id=$(printf 'uci\nquit\n' | "$DATA/bin/stockfish")
+echo "$sf_id" | grep "^id name" || { echo "[setup] Stockfish did not answer uci"; exit 1; }
 step "done"
