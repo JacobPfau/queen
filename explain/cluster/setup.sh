@@ -17,8 +17,11 @@ if is_done venv && ! "$DATA/venv/bin/python" -V >/dev/null 2>&1; then
   rm -rf "$DATA/venv" "$DATA/markers/venv" "$DATA/markers/deps"
 fi
 
-if ! command -v curl >/dev/null; then
-  apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates tar >/dev/null
+# Container packages do not persist, so check every start. Triton compiles a
+# small CUDA helper at runtime and needs a C compiler.
+if ! command -v curl >/dev/null || ! command -v gcc >/dev/null; then
+  apt-get update -qq && apt-get install -y -qq --no-install-recommends \
+    curl ca-certificates tar gcc libc6-dev >/dev/null
 fi
 
 if ! is_done uv; then
