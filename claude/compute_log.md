@@ -2,6 +2,18 @@
 
 One entry per job submitted to the cluster, newest first, written when the job is submitted and updated with its outcome. Budgets: $2k for the pilot, $25k for the whole experiment (`claude/AGENTS.md`).
 
+## pfau-explain-pilot-1007-205100
+
+- **Job:** gpu queue, from JacobPfau/queen@bf08815, submitted 2026-10-07 20:51 UTC.
+- **What it does:** same debugging run as the job below, with the Stockfish setup check fixed and failures written straight to the pod log.
+- **Requests:** 4× H200, 64 CPU, 900Gi memory; storage `pfau-explain-fs` (1Ti crusoe-fs); models and venv on the pod's own disk.
+- **Expected runtime:** 1.5–2.5 h including ~10 min of setup, done around 22:30–23:30 UTC; hard limit 48 h.
+- **Expected cost:** ~6–10 GPU-h; API ~$500 (code cap $1,500; Flash draws on the OpenRouter key's $1k/week limit).
+- **Budget so far:** ~$0.05 of $2k for the pilot, plus ~3 GPU-h lost to the two failed jobs below.
+- **Stop it:** `kubectl -n research delete job pfau-explain-pilot-1007-205100`
+- **Cleanup:** the Job and its code ConfigMap are deleted 24 h after finishing; the shared PVC and results are kept.
+- **Outcome:** running.
+
 ## pfau-explain-pilot-1007-203643
 
 - **Job:** gpu queue, from JacobPfau/queen@5ca73a9, submitted 2026-10-07 20:36 UTC.
@@ -12,7 +24,7 @@ One entry per job submitted to the cluster, newest first, written when the job i
 - **Budget so far:** ~$0.05 of $2k for the pilot, plus ~2.5 GPU-h lost to the stuck job below.
 - **Stop it:** `kubectl -n research delete job pfau-explain-pilot-1007-203643`
 - **Cleanup:** the Job and its code ConfigMap are deleted 24 h after finishing; the shared PVC and results are kept.
-- **Outcome:** running.
+- **Outcome:** failed at the end of setup (20:49 UTC): checking Stockfish's version through `grep -m1` triggered SIGPIPE, which `pipefail` made fatal (fixed in bf08815). The automatic retry pod was deleted at 20:50. No API spend; ~0.9 GPU-h.
 
 ## pfau-explain-pilot-1007-200151
 
