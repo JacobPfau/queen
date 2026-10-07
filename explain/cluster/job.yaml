@@ -63,7 +63,7 @@ spec:
               mountPath: /dev/shm
           resources:
             requests:
-              cpu: "16"
+              cpu: "GPUCOUNT_CPU"
             limits:
-              memory: 225Gi
-              nvidia.com/gpu: 1
+              memory: GPUCOUNT_MEMGi
+              nvidia.com/gpu: GPUCOUNT

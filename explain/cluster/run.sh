@@ -50,19 +50,41 @@ for line in open('$S/qwen_store.jsonl'):
   exit 0
 fi
 
+# One worker per GPU, each on its own shard of the requests and its own store
+# file; shard files are merged into the main store afterwards (and at the start
+# of each round, in case a previous pod died mid-batch).
+NGPU=$(nvidia-smi -L | wc -l)
+merge() {  # merge <worker>
+  for f in "$WORK/$1_store.shard"*.jsonl; do
+    [ -e "$f" ] || continue
+    cat "$f" >> "$WORK/$1_store.jsonl" && rm "$f"
+  done
+}
+gpu_workers() {  # gpu_workers <worker> <model> [extra args...]
+  local worker=$1 model=$2; shift 2
+  local pids=()
+  for i in $(seq 0 $((NGPU - 1))); do
+    CUDA_VISIBLE_DEVICES=$i $PY -m explain.gpu "$worker" --requests "$WORK/${worker}_requests.jsonl" \
+      --store "$WORK/${worker}_store.shard$i.jsonl" --model "$model" \
+      --shard "$i" --num-shards "$NGPU" "$@" > "$WORK/${worker}_gpu$i.log" 2>&1 &
+    pids+=($!)
+  done
+  local failed=0
+  for pid in "${pids[@]}"; do wait "$pid" || failed=1; done
+  tail -n 3 "$WORK/${worker}"_gpu*.log
+  merge "$worker"
+  return $failed
+}
+echo "[run] $NGPU GPUs"
+
 for round in $(seq 1 15); do
   echo "=== round $round $(date -u +%H:%M:%S)"
+  merge queen; merge qwen
   $PY -m explain.pilot --config $CFG advance --yes
   queen=$($PY -c "import json; print(json.load(open('$WORK/status.json'))['queen_pending'])")
   qwen=$($PY -c "import json; print(json.load(open('$WORK/status.json'))['qwen_pending'])")
-  if [ "$queen" -gt 0 ]; then
-    $PY -m explain.gpu queen --requests "$WORK/queen_requests.jsonl" --store "$WORK/queen_store.jsonl" \
-        --model "$QUEEN" --prompt "$PROMPT"
-  fi
-  if [ "$qwen" -gt 0 ]; then
-    $PY -m explain.gpu qwen --requests "$WORK/qwen_requests.jsonl" --store "$WORK/qwen_store.jsonl" \
-        --model "$QWEN"
-  fi
+  if [ "$queen" -gt 0 ]; then gpu_workers queen "$QUEEN" --prompt "$PROMPT"; fi
+  if [ "$qwen" -gt 0 ]; then gpu_workers qwen "$QWEN"; fi
   if [ "$queen" -eq 0 ] && [ "$qwen" -eq 0 ]; then
     $PY -m explain.pilot --config $CFG advance --yes
     api=$($PY -c "import json; print(json.load(open('$WORK/status.json'))['api_pending'])")

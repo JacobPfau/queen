@@ -20,6 +20,7 @@ Qwen request:  {key, system, user, max_tokens?}
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import time
 from pathlib import Path
@@ -31,11 +32,14 @@ from datagen.self_distill.consolidation import strip_thinking
 from explain.common import Store, read_jsonl
 
 
-def pending(requests_path: Path, store: Store) -> list[dict]:
+def pending(requests_path: Path, store: Store, shard: int = 0, num_shards: int = 1) -> list[dict]:
+    """Unanswered requests in this worker's shard (requests split by key hash)."""
     rows = read_jsonl(requests_path)
     seen, todo = set(), []
     for row in rows:
         if row["key"] in store or row["key"] in seen:
+            continue
+        if int(hashlib.md5(row["key"].encode()).hexdigest(), 16) % num_shards != shard:
             continue
         seen.add(row["key"])
         todo.append(row)
@@ -64,7 +68,7 @@ def queen_generator(args):
 
 def run_queen(args) -> None:
     store = Store(args.store)
-    todo = pending(args.requests, store)
+    todo = pending(args.requests, store, args.shard, args.num_shards)
     print(f"[queen] {len(todo)} pending requests", flush=True)
     if not todo:
         return
@@ -99,7 +103,7 @@ def run_queen(args) -> None:
 def run_qwen(args) -> None:
     from vllm import LLM, SamplingParams
     store = Store(args.store)
-    todo = pending(args.requests, store)
+    todo = pending(args.requests, store, args.shard, args.num_shards)
     print(f"[qwen] {len(todo)} pending requests", flush=True)
     if not todo:
         return
@@ -153,6 +157,8 @@ def main() -> None:
     parser.add_argument("--max-output-tokens", type=int, default=8192)
     parser.add_argument("--gpu-memory-utilization", type=float, default=None)
     parser.add_argument("--tensor-parallel", type=int, default=1)
+    parser.add_argument("--shard", type=int, default=0, help="this worker's shard (one per GPU)")
+    parser.add_argument("--num-shards", type=int, default=1)
     args = parser.parse_args()
     if args.worker == "queen":
         args.max_model_len = args.max_model_len or 4096

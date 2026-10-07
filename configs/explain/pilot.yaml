@@ -7,7 +7,7 @@ seed: 20261006
 positions: 100
 stockfish: /data/bin/stockfish
 oracle_nodes: 200000
-oracle_workers: 8
+oracle_workers: 32
 
 # Queen = PAWN-8, the paper's final model (2697 Elo; arXiv 2610.03695), with its
 # own prompt from the release's inference_config.json. HCE-4 is the paper's
