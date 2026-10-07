@@ -1,7 +1,8 @@
 # Pilot of the explanation-utility experiment (explain/pilot.py).
 # Budget: $2k for the whole pilot (claude/AGENTS.md); the API cap below leaves
 # room for GPU time.
-# Paths are on the pilot's PVC; explain/cluster/run.sh sets them up.
+# /data is the shared crusoe-fs volume (results, caches); /local is the pod's
+# own NVMe (models, venv). explain/cluster/setup.sh sets both up.
 workdir: /data/work/pilot
 seed: 20261006
 positions: 100
@@ -12,9 +13,9 @@ oracle_workers: 32
 # Queen = PAWN-8, the paper's final model (2697 Elo; arXiv 2610.03695), with its
 # own prompt from the release's inference_config.json. HCE-4 is the paper's
 # handcrafted-evaluation ablation (at most 2497 Elo).
-queen_model: /data/models/queen_pawn-8
+queen_model: /local/models/queen_pawn-8
 queen_prompt: "Analyze the position carefully and find the best move for player."
-qwen_model: /data/models/Qwen3.8-27B
+qwen_model: /local/models/Qwen3.8-27B
 
 max_api_spend_usd: 1500
 # In-flight API calls per model. Anthropic allows 2M output tokens/min per

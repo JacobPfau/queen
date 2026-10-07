@@ -1,64 +1,62 @@
 #!/usr/bin/env bash
-# Idempotent setup on the pilot PVC (/data): uv, the Queen release environment,
-# model weights, and Stockfish. Each step leaves a marker and is skipped next time.
+# Setup for one pod. Two tiers, as the cluster README recommends:
+#   /data   shared crusoe-fs volume (persists): results, uv and HF caches,
+#           the uv and Stockfish binaries. Markers in /data/markers.
+#   /local  the container's own filesystem on the node's NVMe (rebuilt every
+#           pod): the venv, uv's interpreters and the model weights, which
+#           several GPU workers read at once, faster locally than over NFS.
+# SKIP_MODELS=1 skips the weight downloads (report-only jobs).
 set -euo pipefail
 DATA=/data
-mkdir -p "$DATA/bin" "$DATA/models" "$DATA/markers" "$DATA/cache"
-# uv's interpreters live on the PVC too: the venv links to them, and the
-# container's own home directory does not survive the pod.
-export UV_CACHE_DIR="$DATA/cache/uv" UV_PYTHON_INSTALL_DIR="$DATA/uv-python" \
-       HF_HOME="$DATA/cache/hf" PATH="$DATA/bin:$PATH"
+LOCAL=/local
+mkdir -p "$DATA/bin" "$DATA/markers" "$DATA/cache" "$LOCAL/models" "$LOCAL/markers"
+export UV_CACHE_DIR="$DATA/cache/uv" UV_PYTHON_INSTALL_DIR="$LOCAL/uv-python" \
+       HF_HOME="$DATA/cache/hf" PATH="$DATA/bin:$PATH" UV_LINK_MODE=copy
 
-done_() { touch "$DATA/markers/$1"; }
-is_done() { [ -f "$DATA/markers/$1" ]; }
+done_() { touch "$1/markers/$2"; }
+is_done() { [ -f "$1/markers/$2" ]; }
+step() { echo "[setup] $(date -u +%H:%M:%S) $*"; }
 
-# A venv whose interpreter is gone must be rebuilt, with its packages.
-if is_done venv && ! "$DATA/venv/bin/python" -V >/dev/null 2>&1; then
-  rm -rf "$DATA/venv" "$DATA/markers/venv" "$DATA/markers/deps"
-fi
-
-# Container packages do not persist, so check every start. Triton compiles a
-# small CUDA helper at runtime and needs a C compiler.
+# Container packages do not persist. Triton compiles a small CUDA helper at
+# runtime and needs a C compiler.
 if ! command -v curl >/dev/null || ! command -v gcc >/dev/null; then
+  step "apt packages"
   apt-get update -qq && apt-get install -y -qq --no-install-recommends \
     curl ca-certificates tar gcc libc6-dev >/dev/null
 fi
 
-if ! is_done uv; then
+if ! is_done "$DATA" uv; then
+  step "uv"
   curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR="$DATA/bin" UV_NO_MODIFY_PATH=1 sh
-  done_ uv
+  done_ "$DATA" uv
 fi
 
-if ! is_done venv; then
-  uv venv --python 3.12.12 "$DATA/venv"
-  uv pip install --python "$DATA/venv/bin/python" huggingface-hub==1.27.0
-  done_ venv
+if ! is_done "$LOCAL" venv; then
+  step "venv"
+  uv venv --python 3.12.12 "$LOCAL/venv"
+  uv pip install --python "$LOCAL/venv/bin/python" huggingface-hub==1.27.0
+  # The release's pinned inference environment (its requirements file alone,
+  # without the weights), plus the pilot's own needs.
+  "$LOCAL/venv/bin/hf" download princeton-nlp/queen_pawn-8 requirements-inference.txt \
+    --local-dir "$LOCAL/models/queen_pawn-8"
+  uv pip sync --python "$LOCAL/venv/bin/python" "$LOCAL/models/queen_pawn-8/requirements-inference.txt"
+  uv pip install --python "$LOCAL/venv/bin/python" anthropic google-genai httpx PyYAML
+  done_ "$LOCAL" venv
 fi
 
-for repo in princeton-nlp/queen_hce-4 princeton-nlp/queen_pawn-8; do
-  name=${repo#*/}
-  if ! is_done "model-$name"; then
-    "$DATA/venv/bin/hf" download "$repo" --local-dir "$DATA/models/$name"
-    done_ "model-$name"
-  fi
-done
-
-if ! is_done deps; then
-  # The release's pinned inference environment, plus the pilot's own needs.
-  uv pip sync --python "$DATA/venv/bin/python" "$DATA/models/queen_pawn-8/requirements-inference.txt"
-  uv pip install --python "$DATA/venv/bin/python" anthropic google-genai httpx PyYAML
-  done_ deps
+if [ "${SKIP_MODELS:-0}" != 1 ]; then
+  for repo in princeton-nlp/queen_pawn-8 Qwen/Qwen3.8-27B; do
+    name=${repo#*/}
+    if ! is_done "$LOCAL" "model-$name"; then
+      step "download $repo"
+      "$LOCAL/venv/bin/hf" download "$repo" --local-dir "$LOCAL/models/$name"
+      done_ "$LOCAL" "model-$name"
+    fi
+  done
 fi
 
-"$DATA/venv/bin/python" -c "import httpx" 2>/dev/null \
-  || uv pip install --python "$DATA/venv/bin/python" httpx
-
-if ! is_done model-qwen; then
-  "$DATA/venv/bin/hf" download Qwen/Qwen3.8-27B --local-dir "$DATA/models/Qwen3.8-27B"
-  done_ model-qwen
-fi
-
-if ! is_done stockfish; then
+if ! is_done "$DATA" stockfish; then
+  step "stockfish"
   tmp=$(mktemp -d)
   # Pinned release, so oracle scores do not change with new Stockfish versions.
   curl -LsSf -o "$tmp/sf.tar.gz" \
@@ -66,8 +64,8 @@ if ! is_done stockfish; then
   tar -xzf "$tmp/sf.tar.gz" -C "$tmp"
   install -m 755 "$(find "$tmp" -type f -name 'stockfish-linux-x86-64-universal*' ! -name '*.tar.gz' | head -1)" \
     "$DATA/bin/stockfish"
-  echo "uci" | "$DATA/bin/stockfish" | grep -m1 "^id name"
   rm -rf "$tmp"
-  done_ stockfish
+  done_ "$DATA" stockfish
 fi
-echo "[setup] done"
+echo "uci" | "$DATA/bin/stockfish" | grep -m1 "^id name"
+step "done"

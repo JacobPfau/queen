@@ -12,13 +12,16 @@ from __future__ import annotations
 
 import json
 import random
+import re
 from collections import defaultdict
 from statistics import mean
 
 import chess
 
-from datagen.self_distill.analysis import MOVE, field_map, pov_move
-from explain.common import human, read_jsonl, render_heads
+from datagen.self_distill.analysis import (
+    MOVE, field_map, parse_critical, parse_model_evaluation, pov_move,
+)
+from explain.common import child_fen, human, prose_pov, read_jsonl, render_heads
 
 BOOT = 2000
 
@@ -248,8 +251,140 @@ def rates(rows: list[dict]) -> dict:
     return dict(out)
 
 
+def quantile(values: list[float], q: float) -> float | None:
+    if not values:
+        return None
+    values = sorted(values)
+    return values[min(len(values) - 1, int(q * len(values)))]
+
+
+def health(pilot, rows: list[dict]) -> dict:
+    """Everything that can fail quietly, counted.
+
+    API calls, Queen generations and reads, Qwen and external writers, and
+    decision statuses. Each count is reported with its denominator.
+    """
+    out = {}
+
+    # API calls by model and role: errors by kind, refusals, cut-off and empty
+    # outputs, latency.
+    api = defaultdict(lambda: {"calls": 0, "errors": defaultdict(int), "refusals": 0,
+                               "cut_off": 0, "empty": 0, "seconds": []})
+    for row in pilot.llm.store.values():
+        e = api[f"{row['model']}/{row.get('tag', '')}"]
+        e["calls"] += 1
+        if row.get("error"):
+            kind = re.search(r"(\d{3})|(\w+Error)", row["error"])
+            e["errors"][kind.group(0) if kind else "other"] += 1
+            continue
+        e["refusals"] += row.get("stop_reason") == "refusal"
+        e["cut_off"] += row.get("stop_reason") in ("max_tokens", "length")
+        e["empty"] += not (row.get("text") or "").strip()
+        e["seconds"].append(row.get("seconds", 0))
+    out["api"] = {name: {"calls": e["calls"], "errors": dict(e["errors"]),
+                         "refusals": e["refusals"], "cut_off": e["cut_off"], "empty": e["empty"],
+                         "p50_s": quantile(e["seconds"], 0.5), "p95_s": quantile(e["seconds"], 0.95)}
+                  for name, e in sorted(api.items())}
+
+    # Queen generations (root and children): length cap, and parse rate of each field.
+    gens = {"n": 0, "cut_off": 0, "no_analysis": 0, "best_illegal": 0, "critical_illegal": 0,
+            "critical_empty": 0, "eval_missing": 0, "eval_method": defaultdict(int), "tokens": []}
+    fens = []
+    for position in pilot.positions:
+        fens.append(position["fen"])
+        fens += [child_fen(position["fen"], u) for u in (pilot.children(position) or [])]
+    for fen in fens:
+        row = pilot.queen.get(pilot.gen_key(fen))
+        if row is None:
+            continue
+        text = row["text"]
+        gens["n"] += 1
+        gens["cut_off"] += row.get("finish_reason") == "length"
+        gens["tokens"].append(row.get("output_tokens", 0))
+        fields = field_map(text)
+        gens["no_analysis"] += not prose_pov(text)
+        board = chess.Board(fen)
+        best_atoms = list(MOVE.finditer(fields.get("BEST_MOVE", "")))
+        gens["best_illegal"] += not best_atoms or pov_move(best_atoms[0], board, board.turn)[0] is None
+        critical = parse_critical(fen, text)
+        gens["critical_illegal"] += critical["illegal_at"] is not None
+        gens["critical_empty"] += not critical["legal_steps"]
+        evaluation, error = parse_model_evaluation(text, board.turn)
+        if evaluation is None:
+            gens["eval_missing"] += 1
+        else:
+            gens["eval_method"][evaluation["method"]] += 1
+    gens["eval_method"] = dict(gens["eval_method"])
+    gens["p50_tokens"] = quantile(gens.pop("tokens"), 0.5)
+    out["queen_generations"] = gens
+
+    # Queen reads and Qwen writers: cut off at their token limit.
+    reads = [r for r in pilot.queen.values() if r.get("prefix")]
+    out["queen_reads"] = {"n": len(reads),
+                          "cut_off": sum(r.get("finish_reason") == "length" for r in reads)}
+    qwen = pilot.qwen.values()
+    out["qwen"] = {"n": len(qwen), "cut_off": sum(r.get("finish_reason") == "length" for r in qwen),
+                   "p50_output_tokens": quantile([r.get("output_tokens", 0) for r in qwen], 0.5),
+                   "p95_output_tokens": quantile([r.get("output_tokens", 0) for r in qwen], 0.95)}
+
+    # Writers (hybrid, consolidator, rewrite), per model: unusable outputs by
+    # reason, length against the requested word count, and for full
+    # consolidations whether BEST_MOVE matches the numeric minimax.
+    writers = defaultdict(lambda: {"n": 0, "failed": defaultdict(int), "length_ratio": [],
+                                   "full": 0, "best_matches_minimax": 0})
+
+    def record(model, request, fen, minimax_best=None):
+        if request is None:
+            return
+        text = pilot.writer_output(request, fen)
+        if text is None:
+            return
+        e = writers[model]
+        e["n"] += 1
+        if not text["ok"]:
+            e["failed"][text["error"].split(":")[0]] += 1
+            return
+        target = re.search(r"Write about (\d+) words", request["user"])
+        if target:
+            e["length_ratio"].append(len(human(text["prose"], fen).split()) / int(target.group(1)))
+        if minimax_best is not None and text.get("heads"):
+            e["full"] += 1
+            e["best_matches_minimax"] += text["heads"]["best"] == minimax_best
+
+    for position in pilot.positions:
+        fen = position["fen"]
+        if pilot.generation(fen) is None:
+            continue
+        minimax = pilot.root_texts(position).get("q/d1/minimax", {}).get("heads", {}).get("best")
+        for variant in ("prose", "full"):
+            for cons in pilot.consolidators:
+                record(cons, pilot.consolidation_request(position, "q", variant, cons), fen,
+                       minimax if variant == "full" else None)
+                record(cons, pilot.rewrite_request(position, variant, cons), fen)
+        for writer in pilot.writers:
+            for node in [fen] + [child_fen(fen, u) for u in (pilot.children(position) or [])]:
+                record(writer, pilot.hybrid_request(writer, node), node)
+    out["writers"] = {m: {"n": e["n"], "failed": dict(e["failed"]),
+                          "length_ratio_p50": quantile(e["length_ratio"], 0.5),
+                          "length_ratio_p10": quantile(e["length_ratio"], 0.1),
+                          "length_ratio_p90": quantile(e["length_ratio"], 0.9),
+                          "full_best_matches_minimax": f"{e['best_matches_minimax']}/{e['full']}"}
+                      for m, e in sorted(writers.items())}
+
+    # Decision statuses by agent.
+    statuses = defaultdict(lambda: defaultdict(int))
+    for r in rows:
+        statuses[r["agent"]][r.get("status", "?")] += 1
+    out["decision_status"] = {a: dict(s) for a, s in sorted(statuses.items())}
+    return out
+
+
 def pct(a: int, b: int) -> str:
     return f"{100 * a / b:.1f}% ({a}/{b})" if b else "–"
+
+
+def opt_fmt(value, fmt: str = ".2f") -> str:
+    return "–" if value is None else format(value, fmt)
 
 
 def fmt_ci(pair) -> str:
@@ -297,7 +432,8 @@ def write_report(pilot) -> None:
     report = {"cells": table, "substitution": comparisons, "costs": costs(pilot),
               "queen_gpu": gpu_stats(pilot.queen), "qwen_gpu": gpu_stats(pilot.qwen),
               "compliance": compliance(pilot), "api_spent_usd": pilot.llm.ledger.spent,
-              "rates": rates(rows), "tree_sources": tree_sources(pilot)}
+              "rates": rates(rows), "tree_sources": tree_sources(pilot),
+              "health": health(pilot, rows)}
     (pilot.dir / "report.json").write_text(json.dumps(report, indent=2, default=list))
 
     lines = ["# Pilot report", "",
@@ -327,6 +463,35 @@ def write_report(pilot) -> None:
                   f"position: {ts['mean_promising_written']:.2f}, legal: {ts['mean_promising_legal']:.2f} "
                   f"({ts['promising_illegal_pct']:.0f}% illegal). Distinct legal root moves in "
                   f"ANALYSIS: {ts['mean_analysis_moves']:.2f}."]
+    h = report["health"]
+    lines += ["", "## Health (debugging counts)", "", "### API calls", "",
+              "| model/role | calls | errors by kind | refusals | cut off at token limit | empty | p50 s | p95 s |",
+              "|---|---|---|---|---|---|---|---|"]
+    for name, e in h["api"].items():
+        lines.append(f"| {name} | {e['calls']} | {e['errors'] or '–'} | {e['refusals']} | {e['cut_off']} | "
+                     f"{e['empty']} | {opt_fmt(e['p50_s'])} | {opt_fmt(e['p95_s'])} |")
+    g = h["queen_generations"]
+    lines += ["", "### Queen generations (roots and children)", "",
+              f"n={g['n']}; cut off at 2048 tokens: {pct(g['cut_off'], g['n'])}; median tokens: {g['p50_tokens']}",
+              f"No ANALYSIS: {pct(g['no_analysis'], g['n'])}; BEST_MOVE missing or illegal: "
+              f"{pct(g['best_illegal'], g['n'])}; CRITICAL_LINE hits an illegal move: "
+              f"{pct(g['critical_illegal'], g['n'])}; CRITICAL_LINE empty: {pct(g['critical_empty'], g['n'])}",
+              f"EVALUATION unparsed: {pct(g['eval_missing'], g['n'])}; how its sign was read: {g['eval_method']} "
+              "(white_pov_fallback means no side was named, so the sign may be wrong)",
+              "", f"Queen reads: n={h['queen_reads']['n']}, cut off: "
+              f"{pct(h['queen_reads']['cut_off'], h['queen_reads']['n'])}. Qwen: n={h['qwen']['n']}, cut off: "
+              f"{pct(h['qwen']['cut_off'], h['qwen']['n'])}, output tokens p50/p95: "
+              f"{h['qwen']['p50_output_tokens']}/{h['qwen']['p95_output_tokens']}.",
+              "", "### Writers", "",
+              "| writer | outputs | unusable (by reason) | length / target p10, p50, p90 | full: BEST_MOVE = minimax |",
+              "|---|---|---|---|---|"]
+    for m, e in h["writers"].items():
+        lines.append(f"| {m} | {e['n']} | {e['failed'] or '–'} | {opt_fmt(e['length_ratio_p10'])}, "
+                     f"{opt_fmt(e['length_ratio_p50'])}, {opt_fmt(e['length_ratio_p90'])} | "
+                     f"{e['full_best_matches_minimax']} |")
+    lines += ["", "### Decision statuses", "", "| agent | statuses |", "|---|---|"]
+    for a, st in h["decision_status"].items():
+        lines.append(f"| {a} | {st} |")
     lines += ["", "## Writer output Queen can read", "", "| writer | readable |", "|---|---|"]
     for model, c in sorted(report["compliance"].items()):
         lines.append(f"| {model} | {c['ok']}/{c['total']} ({c['pct']:.0f}%) |")

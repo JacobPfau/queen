@@ -19,6 +19,7 @@ import argparse
 import json
 import re
 import sys
+import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -624,6 +625,9 @@ class Pilot:
         status = {"queen_pending": len(queen), "qwen_pending": len(qwen),
                   "api_pending": api_left, "api_spent_usd": self.llm.ledger.spent}
         (self.dir / "status.json").write_text(json.dumps(status))
+        with (self.dir / "status_history.jsonl").open("a") as handle:  # one line per advance
+            handle.write(json.dumps({"utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                                     **status}) + "\n")
         print(f"[advance] {status}")
 
     # ---------------------------------------------------------------- report

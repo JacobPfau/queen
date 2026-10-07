@@ -1,18 +1,22 @@
 # Pilot on the resolution-h200 cluster (see ~/Code/timaeus/infra/crusoe/resolution-h200).
 # Launch with explain/cluster/launch.sh, which ships the code as a ConfigMap and
-# sets MODE (smoke | pilot). The PVC persists models, environments and results
-# between runs; every pilot result is cached there, so a rerun resumes.
+# sets MODE (smoke | pilot | report). The shared PVC persists results and
+# caches between runs; every pilot result is cached there, so a rerun resumes.
+# Models and the venv live on each pod's own disk (setup.sh).
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: pfau-explain-pilot
+  name: pfau-explain-fs
   namespace: research
 spec:
-  accessModes: [ReadWriteOnce]
-  storageClassName: crusoe-ssd
+  # Shared NFS disk: mountable from any node at once, so a pod moving nodes
+  # never re-attaches a block device (a crusoe-ssd re-attach once tried to
+  # reformat the disk on mount, 2026-10-07).
+  accessModes: [ReadWriteMany]
+  storageClassName: crusoe-fs
   resources:
     requests:
-      storage: 300Gi
+      storage: 1Ti
 ---
 apiVersion: batch/v1
 kind: Job
@@ -33,7 +37,7 @@ spec:
       volumes:
         - name: data
           persistentVolumeClaim:
-            claimName: pfau-explain-pilot
+            claimName: pfau-explain-fs
         - name: code
           configMap:
             name: pfau-explain-code-JOBSUFFIX
@@ -50,6 +54,20 @@ spec:
           env:
             - name: MODE
               value: JOBMODE
+            - name: JOB_COMMIT
+              value: JOBCOMMIT
+            - name: JOB_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.labels['job-name']
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
           envFrom:
             - secretRef:
                 name: pfau-explain-env   # ANTHROPIC_API_KEY, OPENROUTER_API_KEY (from Secret Manager)

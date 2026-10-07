@@ -73,8 +73,15 @@ def run_queen(args) -> None:
     if not todo:
         return
     generator = queen_generator(args)
-    for start in range(0, len(todo), args.chunk):
-        chunk = todo[start:start + args.chunk]
+    # Batch requests with the same token budget together, so short reads are
+    # never given a full generation's 2048-token budget.
+    todo.sort(key=lambda row: row.get("max_tokens", 2048))
+    chunks = [todo[i:i + args.chunk] for i in range(0, len(todo), args.chunk)]
+    chunks = [[r for r in c if r.get("max_tokens", 2048) == m]
+              for c in chunks for m in sorted({r.get("max_tokens", 2048) for r in c})]
+    done = 0
+    for chunk in chunks:
+        done += len(chunk)
         began = time.perf_counter()
         # _prompt_ids runs once per request, in order, inside generate().
         generator.prefixes = iter([row.get("prefix") or "" for row in chunk])
@@ -97,7 +104,7 @@ def run_queen(args) -> None:
                 "batch_seconds": seconds,
                 "batch_size": len(chunk),
             })
-        print(f"[queen] {start + len(chunk)}/{len(todo)} in {seconds:.0f}s", flush=True)
+        print(f"[queen] {done}/{len(todo)} in {seconds:.0f}s", flush=True)
 
 
 def run_qwen(args) -> None:
