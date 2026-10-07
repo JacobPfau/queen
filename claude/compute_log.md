@@ -2,6 +2,22 @@
 
 One entry per job submitted to the cluster, newest first, written when the job is submitted and updated with its outcome. Budgets: $2k for the pilot, $25k for the whole experiment (`claude/AGENTS.md`).
 
+## pfau-explain-pilot-1007-215037
+
+- **Job:** gpu queue, from JacobPfau/queen@edfd3ef, submitted 2026-10-07 21:50 UTC.
+- **What it does:** resumes the debugging pilot from its cache, with the round-4 crash fixed, Qwen allowed 24k output tokens (cut-off consolidations redone), and Flash held under OpenRouter's 300 requests/min.
+- **Requests:** 4× H200, 64 CPU, 900Gi memory; storage `pfau-explain-fs` (1Ti crusoe-fs); models and venv on the pod's own disk.
+- **Expected runtime:** 1–1.5 h, done around 23:00–23:30 UTC; hard limit 48 h.
+- **Expected cost:** ~5 GPU-h; API ~$200–300 more (code cap $1,500; Flash draws on the OpenRouter key's $1k/week limit).
+- **Budget so far:** $293 API of $2k for the pilot, plus ~6 GPU-h used (about 3 lost to failed jobs).
+- **Stop it:** `kubectl -n research delete job pfau-explain-pilot-1007-215037`
+- **Cleanup:** the Job and its code ConfigMap are deleted 24 h after finishing; the shared PVC and results are kept.
+- **Outcome:** running.
+
+## pfau-explain-inspect (2026-10-07 21:5x UTC)
+
+- CPU-only pod (2 CPU, 8Gi, cpu queue, python:3.12-slim) mounting `pfau-explain-fs` to read the failed run's log and caches; sleeps at most 1 h, no GPU, no API spend.
+
 ## pfau-explain-pilot-1007-205100
 
 - **Job:** gpu queue, from JacobPfau/queen@bf08815, submitted 2026-10-07 20:51 UTC.
@@ -12,7 +28,7 @@ One entry per job submitted to the cluster, newest first, written when the job i
 - **Budget so far:** ~$0.05 of $2k for the pilot, plus ~3 GPU-h lost to the two failed jobs below.
 - **Stop it:** `kubectl -n research delete job pfau-explain-pilot-1007-205100`
 - **Cleanup:** the Job and its code ConfigMap are deleted 24 h after finishing; the shared PVC and results are kept.
-- **Outcome:** running.
+- **Outcome:** ran rounds 1–3 (21:02–21:48 UTC), then crashed at the start of round 4 on a full Qwen consolidation with no parseable heads. The run also showed 26% of Qwen outputs cut off at 8192 tokens and 119 Flash calls rate-limited (OpenRouter's 300 requests/min). Fixed in edfd3ef. Spent $293 API and ~3 GPU-h; all results are cached.
 
 ## pfau-explain-pilot-1007-203643
 
