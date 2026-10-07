@@ -4,10 +4,18 @@
 set -euo pipefail
 DATA=/data
 mkdir -p "$DATA/bin" "$DATA/models" "$DATA/markers" "$DATA/cache"
-export UV_CACHE_DIR="$DATA/cache/uv" HF_HOME="$DATA/cache/hf" PATH="$DATA/bin:$PATH"
+# uv's interpreters live on the PVC too: the venv links to them, and the
+# container's own home directory does not survive the pod.
+export UV_CACHE_DIR="$DATA/cache/uv" UV_PYTHON_INSTALL_DIR="$DATA/uv-python" \
+       HF_HOME="$DATA/cache/hf" PATH="$DATA/bin:$PATH"
 
 done_() { touch "$DATA/markers/$1"; }
 is_done() { [ -f "$DATA/markers/$1" ]; }
+
+# A venv whose interpreter is gone must be rebuilt, with its packages.
+if is_done venv && ! "$DATA/venv/bin/python" -V >/dev/null 2>&1; then
+  rm -rf "$DATA/venv" "$DATA/markers/venv" "$DATA/markers/deps"
+fi
 
 if ! command -v curl >/dev/null; then
   apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates tar >/dev/null

@@ -3,7 +3,8 @@
 #   MODE=smoke  check CUDA, Queen generation on two positions, and the Qwen load
 #   MODE=pilot  loop `advance` and the GPU workers until nothing is pending, then report
 set -euo pipefail
-export PATH=/data/bin:$PATH HF_HOME=/data/cache/hf TOKENIZERS_PARALLELISM=false
+export PATH=/data/bin:$PATH HF_HOME=/data/cache/hf UV_PYTHON_INSTALL_DIR=/data/uv-python \
+       TOKENIZERS_PARALLELISM=false
 export VLLM_ENABLE_V1_MULTIPROCESSING=0 VLLM_USE_FLASHINFER_SAMPLER=0 \
        VLLM_DISABLE_REQUEST_ID_RANDOMIZATION=1 OMP_NUM_THREADS=1
 rm -rf /data/code && mkdir -p /data/code && tar -xzf /code/code.tgz -C /data/code
