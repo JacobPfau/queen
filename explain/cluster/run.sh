@@ -2,6 +2,7 @@
 # Pod entrypoint: unpack the code, set up the PVC, then run the pilot to completion.
 #   MODE=smoke  check CUDA, Queen generation on two positions, and the Qwen load
 #   MODE=pilot  loop `advance` and the GPU workers until nothing is pending, then report
+#   MODE=report re-score cached results and rewrite the report (CPU only)
 set -euo pipefail
 export PATH=/data/bin:$PATH HF_HOME=/data/cache/hf UV_PYTHON_INSTALL_DIR=/data/uv-python \
        TOKENIZERS_PARALLELISM=false
@@ -76,6 +77,11 @@ gpu_workers() {  # gpu_workers <worker> <model> [extra args...]
   return $failed
 }
 echo "[run] $NGPU GPUs"
+
+if [ "${MODE:-pilot}" = report ]; then  # re-score cached results; no GPU or API work
+  $PY -m explain.pilot --config $CFG report
+  exit 0
+fi
 
 for round in $(seq 1 15); do
   echo "=== round $round $(date -u +%H:%M:%S)"

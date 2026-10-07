@@ -110,6 +110,12 @@ class Scorer:
         table = self.table(fen)
         return max(table.values()) - table[uci]
 
+    def uniform_regret(self, fen: str) -> float:
+        """Expected regret of a uniformly random legal move: the score of a
+        failed decision (its exact expectation, so it adds no sampling noise)."""
+        table = self.table(fen)
+        return max(table.values()) - sum(table.values()) / len(table)
+
     def best(self, fen: str) -> str:
         table = self.table(fen)
         return max(table, key=table.get)

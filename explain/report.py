@@ -1,8 +1,11 @@
 """Pilot report: regret per cell, model-substitution comparisons, cost, samples.
 
 Writes report.md, report.json and samples.md into the pilot workdir.
-Regret is Stockfish win-rate regret in percentage points; a failed decision
-(missing, unparseable, illegal) plays the R0 move and is counted in fail%.
+Regret is Stockfish win-rate regret in percentage points. A failed decision
+(missing, refused, unparseable, illegal, empty) is scored as a uniformly random
+legal move (its expected regret) and counted in fail%. Every cell also reports
+regret over its successful decisions only, the share of one-ply children whose
+reading failed, and the share of Queen reads whose prose was truncated.
 """
 
 from __future__ import annotations
@@ -12,6 +15,9 @@ import random
 from collections import defaultdict
 from statistics import mean
 
+import chess
+
+from datagen.self_distill.analysis import MOVE, field_map, pov_move
 from explain.common import human, read_jsonl, render_heads
 
 BOOT = 2000
@@ -41,10 +47,18 @@ def cell_table(rows: list[dict]) -> list[dict]:
     table = []
     for name, group in sorted(groups.items()):
         regrets = [100 * r["regret"] for r in group]
+        ok = [100 * r["regret"] for r in group if not r["fallback_used"]]
         low, high = ci(regrets)
+        children = sum(r.get("n_children", 0) for r in group)
+        reads = sum(r.get("queen_reads", 0) for r in group)
         table.append({
             "cell": name, "n": len(group), "regret": mean(regrets), "ci": [low, high],
+            "regret_ok": mean(ok) if ok else None,
             "fail_pct": 100 * mean(r["fallback_used"] for r in group),
+            "child_fail_pct": (100 * sum(r.get("failed_children", 0) for r in group) / children
+                               if children else None),
+            "trunc_pct": (100 * sum(r.get("truncated_reads", 0) for r in group) / reads
+                          if reads else None),
             "top1_pct": 100 * mean(r.get("move") == r["sf_best"] for r in group),
         })
     return table
@@ -78,9 +92,18 @@ def substitution(rows: list[dict], role: str, reference: str, swap) -> list[dict
         summary[model].extend(diffs)
         out.append({"role": role, "model": model, "cell": key, "n": len(items),
                     "regret_diff": mean(diffs), "ci": ci(diffs), "move_agree_pct": 100 * agree})
-    for model, diffs in summary.items():
-        out.append({"role": role, "model": model, "cell": "ALL CELLS", "n": len(diffs),
-                    "regret_diff": mean(diffs), "ci": ci(diffs), "move_agree_pct": None})
+    # Pooled row: average each position's differences across cells first, so the
+    # bootstrap resamples positions (the independent unit), not cell-position pairs.
+    for model in summary:
+        by_position = defaultdict(list)
+        for (m, _), items in pairs.items():
+            if m == model:
+                for a, b in items:
+                    by_position[a["position_id"]].append(100 * (a["regret"] - b["regret"]))
+        diffs = [mean(v) for v in by_position.values()]
+        out.append({"role": role, "model": model, "cell": "ALL CELLS (per-position mean)",
+                    "n": len(diffs), "regret_diff": mean(diffs), "ci": ci(diffs),
+                    "move_agree_pct": None})
     return out
 
 
@@ -164,6 +187,71 @@ def compliance(pilot) -> dict:
             for model, (ok, total) in counts.items()}
 
 
+def tree_sources(pilot) -> dict:
+    """Why the shared tree's children are not always Queen's own candidates.
+
+    For each root generation: whether BEST_MOVE parsed to a legal move, how many
+    PROMISING_MOVES were written and how many were legal, how many distinct legal
+    root moves the ANALYSIS mentions, and how many of the three children came
+    from Queen (the rest are topped up by move_priority).
+    """
+    rows = []
+    for position in pilot.positions:
+        fen = position["fen"]
+        generation = pilot.generation(fen)
+        if generation is None:
+            continue
+        board = chess.Board(fen)
+        fields = field_map(generation)
+
+        def legal(section):
+            moves = []
+            for atom in MOVE.finditer(fields.get(section, "")):
+                move, _ = pov_move(atom, board.copy(stack=False), board.turn)
+                if move is not None and move not in moves:
+                    moves.append(move)
+            return moves
+
+        written = len(MOVE.findall(fields.get("PROMISING_MOVES", "")))
+        best, promising, analysis = legal("BEST_MOVE"), legal("PROMISING_MOVES"), legal("ANALYSIS")
+        queen = len(dict.fromkeys(best + promising + analysis))
+        rows.append({"best_legal": bool(best), "promising_written": written,
+                     "promising_legal": len(promising), "analysis_moves": len(analysis),
+                     "queen_children": min(3, queen)})
+    if not rows:
+        return {}
+    n = len(rows)
+    return {
+        "positions": n,
+        "queen_children_dist": {k: sum(r["queen_children"] == k for r in rows) for k in range(4)},
+        "best_move_legal_pct": 100 * mean(r["best_legal"] for r in rows),
+        "mean_promising_written": mean(r["promising_written"] for r in rows),
+        "mean_promising_legal": mean(r["promising_legal"] for r in rows),
+        "promising_illegal_pct": 100 * (1 - sum(r["promising_legal"] for r in rows)
+                                        / max(1, sum(r["promising_written"] for r in rows))),
+        "mean_analysis_moves": mean(r["analysis_moves"] for r in rows),
+    }
+
+
+def rates(rows: list[dict]) -> dict:
+    """Overall failure, child-failure and truncation rates, by agent."""
+    out = defaultdict(lambda: {"decisions": 0, "failed": 0, "children": 0,
+                               "failed_children": 0, "reads": 0, "truncated": 0})
+    for r in rows:
+        e = out[r["agent"]]
+        e["decisions"] += 1
+        e["failed"] += r["fallback_used"]
+        e["children"] += r.get("n_children", 0)
+        e["failed_children"] += r.get("failed_children", 0)
+        e["reads"] += r.get("queen_reads", 0)
+        e["truncated"] += r.get("truncated_reads", 0)
+    return dict(out)
+
+
+def pct(a: int, b: int) -> str:
+    return f"{100 * a / b:.1f}% ({a}/{b})" if b else "–"
+
+
 def fmt_ci(pair) -> str:
     return f"[{pair[0]:+.2f}, {pair[1]:+.2f}]"
 
@@ -208,7 +296,8 @@ def write_report(pilot) -> None:
                    + substitution(rows, "consolidator", reference, consolidator_slot))
     report = {"cells": table, "substitution": comparisons, "costs": costs(pilot),
               "queen_gpu": gpu_stats(pilot.queen), "qwen_gpu": gpu_stats(pilot.qwen),
-              "compliance": compliance(pilot), "api_spent_usd": pilot.llm.ledger.spent}
+              "compliance": compliance(pilot), "api_spent_usd": pilot.llm.ledger.spent,
+              "rates": rates(rows), "tree_sources": tree_sources(pilot)}
     (pilot.dir / "report.json").write_text(json.dumps(report, indent=2, default=list))
 
     lines = ["# Pilot report", "",
@@ -222,6 +311,22 @@ def write_report(pilot) -> None:
         agree = "" if c["move_agree_pct"] is None else f"{c['move_agree_pct']:.0f}%"
         lines.append(f"| {c['role']} | {c['model']} | {c['cell']} | {c['n']} | "
                      f"{c['regret_diff']:+.2f} | {fmt_ci(c['ci'])} | {agree} |")
+    lines += ["", "## Failure, child-failure and truncation rates", "",
+              "| agent | failed decisions (scored as random) | one-ply children failed | Queen reads truncated |",
+              "|---|---|---|---|"]
+    for agent, e in sorted(report["rates"].items()):
+        lines.append(f"| {agent} | {pct(e['failed'], e['decisions'])} | "
+                     f"{pct(e['failed_children'], e['children'])} | {pct(e['truncated'], e['reads'])} |")
+    ts = report["tree_sources"]
+    if ts:
+        dist = ", ".join(f"{k}: {v}" for k, v in ts["queen_children_dist"].items())
+        lines += ["", "## Where the shared tree's children come from", "",
+                  f"Positions: {ts['positions']}. Children supplied by Queen (rest topped up by "
+                  f"move_priority), count of positions by number: {dist}.",
+                  f"BEST_MOVE legal: {ts['best_move_legal_pct']:.0f}%. PROMISING_MOVES written per "
+                  f"position: {ts['mean_promising_written']:.2f}, legal: {ts['mean_promising_legal']:.2f} "
+                  f"({ts['promising_illegal_pct']:.0f}% illegal). Distinct legal root moves in "
+                  f"ANALYSIS: {ts['mean_analysis_moves']:.2f}."]
     lines += ["", "## Writer output Queen can read", "", "| writer | readable |", "|---|---|"]
     for model, c in sorted(report["compliance"].items()):
         lines.append(f"| {model} | {c['ok']}/{c['total']} ({c['pct']:.0f}%) |")
@@ -233,10 +338,15 @@ def write_report(pilot) -> None:
                      f"{c['usd_per_call']:.4f} | {c['mean_in']:.0f} | {c['mean_out']:.0f} |")
     lines += ["", "## GPU", "", f"Queen: {report['queen_gpu']}", "", f"Qwen: {report['qwen_gpu']}",
               "", "## All cells", "",
-              "| cell | n | regret | 95% CI | fail% | top-1% |", "|---|---|---|---|---|---|"]
+              "| cell | n | regret | 95% CI | regret (successes) | fail% | child fail% | trunc% | top-1% |",
+              "|---|---|---|---|---|---|---|---|---|"]
+    def opt(value, fmt):
+        return "–" if value is None else format(value, fmt)
     for c in table:
         lines.append(f"| {c['cell']} | {c['n']} | {c['regret']:.2f} | {fmt_ci(c['ci'])} | "
-                     f"{c['fail_pct']:.0f} | {c['top1_pct']:.0f} |")
+                     f"{opt(c['regret_ok'], '.2f')} | {c['fail_pct']:.0f} | "
+                     f"{opt(c['child_fail_pct'], '.0f')} | {opt(c['trunc_pct'], '.0f')} | "
+                     f"{c['top1_pct']:.0f} |")
     (pilot.dir / "report.md").write_text("\n".join(lines) + "\n")
     write_samples(pilot, pilot.dir / "samples.md")
     print(f"[report] wrote {pilot.dir / 'report.md'} and samples.md")

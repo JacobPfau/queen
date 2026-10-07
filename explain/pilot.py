@@ -466,7 +466,7 @@ class Pilot:
         return self.parse_external(fen, row, "chooser" if cell_kind == "chooser" else "reader")
 
     def decide(self, position: dict, cell: dict) -> dict:
-        """The move a cell plays, or a failure status (scored with the R0 fallback)."""
+        """The move a cell plays, or a failure status (scored as a uniform random move)."""
         fen = position["fen"]
         rung, agent = cell["rung"], cell["agent"]
         if agent == "hce":
@@ -486,18 +486,23 @@ class Pilot:
             return {"status": "ok" if text["heads"]["best"] else "empty", "move": text["heads"]["best"]}
         requests = self.cell_requests(position, cell)
         answers = [self.answer(cfen, request, kind, cell["kind"]) for cfen, request, kind in requests]
+        reads = {"queen_reads": sum(kind == "queen" for _, _, kind in requests),
+                 "truncated_reads": sum(bool(a.get("truncated")) for a in answers)}
         if cell["kind"] != "oneply":
-            return answers[0]
+            return {**answers[0], **reads}
         # one-ply search: the child whose value (from the side to move) is highest.
+        # Children whose reading failed or gave no value are counted, not hidden.
         values = {}
         for uci, answer in zip(self.children(position), answers):
             if answer.get("winrate") is not None:
                 values[uci] = 1.0 - answer["winrate"]
+        children = {"n_children": len(answers), "failed_children": len(answers) - len(values),
+                    "child_statuses": [a["status"] for a in answers], **reads}
         if not values:
             statuses = sorted({a["status"] for a in answers})
-            return {"status": "empty" if statuses == ["ok"] else "/".join(statuses)}
+            return {"status": "empty" if statuses == ["ok"] else "/".join(statuses), **children}
         return {"status": "ok", "move": max(values, key=values.get), "child_values": values,
-                "missing_children": len(answers) - len(values)}
+                **children}
 
     # ---------------------------------------------------------------- stages
 
@@ -632,13 +637,13 @@ class Pilot:
         rows = []
         for position in positions:
             fen = position["fen"]
-            fallback = self.r0_move(position)
             for cell in self.cells(position):
                 decision = self.decide(position, cell)
                 move = decision.get("move") if decision["status"] == "ok" else None
                 rows.append({
                     "position_id": position["position_id"], **cell, **decision,
-                    "regret": scorer.regret(fen, move or fallback),
+                    # A failed decision plays a uniformly random legal move.
+                    "regret": scorer.regret(fen, move) if move else scorer.uniform_regret(fen),
                     "fallback_used": move is None,
                     "sf_best": scorer.best(fen),
                 })
