@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import threading
 from pathlib import Path
 from typing import Any
@@ -164,6 +165,38 @@ def prose_ranking(fen: str, prose: str) -> list[str]:
     return ranking
 
 
+# PAWN-8 usually writes "the player is up/down approximately 0.54 pawns", an
+# unsigned number with the direction in words, which parse_model_evaluation
+# misreads (it falls back to treating the number as White's view). Read the
+# direction words first; this agreed with Stockfish's sign where the old
+# fallback was at chance (27/46).
+_UP = r"up|ahead|better|winning|clearly better|much better|slightly better"
+_DOWN = r"down|behind|worse|losing|clearly worse|much worse|slightly worse"
+UP_DOWN = re.compile(
+    r"(?i)\b(?:the\s+)?(player|opponent|<PLAYER>|<OPPONENT>)\s+(?:is|stands|remains)\s+"
+    r"(?:(?:only|still|roughly|about|approximately|slightly|clearly|much|a\s+bit)\s+)*"
+    rf"({_UP}|{_DOWN})\b[^.;\n]{{0,40}}?([-+]?\d+(?:\.\d+)?)\s*(?:pawns?|points?)?"
+)
+
+
+def parse_queen_evaluation(generation: str, side: chess.Color) -> tuple[dict | None, str | None]:
+    """Side-to-move win rate from an EVALUATION field (see UP_DOWN)."""
+    fields = field_map(generation)
+    text = fields.get("EVALUATION", "")
+    match = UP_DOWN.search(text)
+    if match is None:
+        return parse_model_evaluation(generation, side)
+    subject, direction, number = match.groups()
+    magnitude = abs(float(number))
+    mover = subject.strip("<>").lower() == "player"
+    favourable = re.fullmatch(_UP, direction.lower()) is not None
+    sign = 1 if mover == favourable else -1
+    cp = round(sign * magnitude * 100)
+    return {"raw": text, "kind": "pawn", "method": "player_up_down",
+            "root_pov": f"{sign * magnitude:+.2f}", "winrate": expected_winrate(cp),
+            "order": (0, sign * magnitude)}, None
+
+
 def parse_heads(fen: str, generation: str) -> dict:
     """R3: best move, legal PV prefix, and side-to-move win rate, or Nones."""
     board = chess.Board(fen)
@@ -174,7 +207,7 @@ def parse_heads(fen: str, generation: str) -> dict:
         break
     critical = parse_critical(fen, generation)
     pv = [step["uci"] for step in critical["legal_steps"]]
-    evaluation, error = parse_model_evaluation(generation, board.turn)
+    evaluation, error = parse_queen_evaluation(generation, board.turn)
     if best is None and pv:
         best = pv[0]
     return {
@@ -183,6 +216,7 @@ def parse_heads(fen: str, generation: str) -> dict:
         "winrate": evaluation["winrate"] if evaluation else None,
         "eval_display": evaluation["root_pov"] if evaluation else None,
         "eval_error": error,
+        "eval_method": evaluation["method"] if evaluation else None,
     }
 
 

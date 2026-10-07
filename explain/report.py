@@ -19,9 +19,12 @@ from statistics import mean
 import chess
 
 from datagen.self_distill.analysis import (
-    MOVE, field_map, parse_critical, parse_model_evaluation, pov_move,
+    MOVE, field_map, parse_critical, pov_move,
 )
-from explain.common import child_fen, human, prose_pov, read_jsonl, render_heads
+from explain.common import (
+    child_fen, human, parse_queen_evaluation, prose_pov, read_jsonl, render_heads,
+)
+from explain.positions import Scorer
 
 BOOT = 2000
 
@@ -288,7 +291,10 @@ def health(pilot, rows: list[dict]) -> dict:
 
     # Queen generations (root and children): length cap, and parse rate of each field.
     gens = {"n": 0, "cut_off": 0, "no_analysis": 0, "best_illegal": 0, "critical_illegal": 0,
-            "critical_empty": 0, "eval_missing": 0, "eval_method": defaultdict(int), "tokens": []}
+            "critical_empty": 0, "eval_missing": 0, "eval_method": defaultdict(int), "tokens": [],
+            "root_sign_agrees": defaultdict(lambda: [0, 0])}
+    scorer = Scorer(pilot.cfg["stockfish"], pilot.dir / "sf_store.jsonl", pilot.cfg["oracle_nodes"])
+    roots = {p["fen"] for p in pilot.positions}
     fens = []
     for position in pilot.positions:
         fens.append(position["fen"])
@@ -309,12 +315,20 @@ def health(pilot, rows: list[dict]) -> dict:
         critical = parse_critical(fen, text)
         gens["critical_illegal"] += critical["illegal_at"] is not None
         gens["critical_empty"] += not critical["legal_steps"]
-        evaluation, error = parse_model_evaluation(text, board.turn)
+        evaluation, error = parse_queen_evaluation(text, board.turn)
         if evaluation is None:
             gens["eval_missing"] += 1
         else:
             gens["eval_method"][evaluation["method"]] += 1
+            # Sign check against Stockfish at roots, skipping near-equal positions.
+            if fen in roots:
+                truth = max(scorer.table(fen).values())
+                if abs(truth - 0.5) >= 0.04 and abs(evaluation["winrate"] - 0.5) >= 0.005:
+                    tally = gens["root_sign_agrees"][evaluation["method"]]
+                    tally[0] += (evaluation["winrate"] - 0.5) * (truth - 0.5) > 0
+                    tally[1] += 1
     gens["eval_method"] = dict(gens["eval_method"])
+    gens["root_sign_agrees"] = {m: f"{a}/{n}" for m, (a, n) in gens["root_sign_agrees"].items()}
     gens["p50_tokens"] = quantile(gens.pop("tokens"), 0.5)
     out["queen_generations"] = gens
 
@@ -478,6 +492,8 @@ def write_report(pilot) -> None:
               f"{pct(g['critical_illegal'], g['n'])}; CRITICAL_LINE empty: {pct(g['critical_empty'], g['n'])}",
               f"EVALUATION unparsed: {pct(g['eval_missing'], g['n'])}; how its sign was read: {g['eval_method']} "
               "(white_pov_fallback means no side was named, so the sign may be wrong)",
+              f"Root evaluations whose sign agrees with Stockfish, by method (positions not near equal): "
+              f"{g['root_sign_agrees']}",
               "", f"Queen reads: n={h['queen_reads']['n']}, cut off: "
               f"{pct(h['queen_reads']['cut_off'], h['queen_reads']['n'])}. Qwen: n={h['qwen']['n']}, cut off: "
               f"{pct(h['qwen']['cut_off'], h['qwen']['n'])}, output tokens p50/p95: "
