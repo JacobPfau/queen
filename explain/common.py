@@ -246,6 +246,8 @@ def render_line(fen: str, ucis: list[str]) -> str:
 
 def render_heads(fen: str, heads: dict) -> str:
     """Numeric heads as plain text for an external model."""
+    if not heads:
+        return "(no parseable heads)"
     lines = []
     if heads.get("best"):
         lines.append(f"Best move: {san(fen, heads['best'])}")

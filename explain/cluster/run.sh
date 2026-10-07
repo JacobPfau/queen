@@ -37,6 +37,7 @@ WORK=$($PY -c "import yaml; print(yaml.safe_load(open('$CFG'))['workdir'])")
 QUEEN=$($PY -c "import yaml; print(yaml.safe_load(open('$CFG'))['queen_model'])")
 PROMPT=$($PY -c "import yaml; print(yaml.safe_load(open('$CFG'))['queen_prompt'])")
 QWEN=$($PY -c "import yaml; print(yaml.safe_load(open('$CFG'))['qwen_model'])")
+QWEN_MAX=$($PY -c "import yaml; print(yaml.safe_load(open('$CFG')).get('qwen_max_output_tokens', 24576))")
 mkdir -p "$WORK"
 NGPU=$(nvidia-smi -L 2>/dev/null | wc -l || echo 0)
 GPUINFO=$(nvidia-smi --query-gpu=name,driver_version --format=csv,noheader 2>/dev/null | sort | uniq -c | tr -s ' ' || echo none)
@@ -101,7 +102,7 @@ gpu_workers() {  # gpu_workers <worker> <round> <model> [extra args...]
   local pids=() started=$SECONDS
   for i in $(seq 0 $((NGPU - 1))); do
     CUDA_VISIBLE_DEVICES=$i $PY -m explain.gpu "$worker" --requests "$WORK/${worker}_requests.jsonl" \
-      --store "$WORK/${worker}_store.shard$i.jsonl" --model "$model" \
+      --store "$WORK/${worker}_store.shard$i.jsonl" --main-store "$WORK/${worker}_store.jsonl" --model "$model" \
       --shard "$i" --num-shards "$NGPU" "$@" > "$RUNDIR/${worker}_r${round}_gpu$i.log" 2>&1 &
     pids+=($!)
   done
@@ -123,7 +124,7 @@ for round in $(seq 1 15); do
   queen=$($PY -c "import json; print(json.load(open('$WORK/status.json'))['queen_pending'])")
   qwen=$($PY -c "import json; print(json.load(open('$WORK/status.json'))['qwen_pending'])")
   if [ "$queen" -gt 0 ]; then stage "queen r$round"; gpu_workers queen "$round" "$QUEEN" --prompt "$PROMPT"; fi
-  if [ "$qwen" -gt 0 ]; then stage "qwen r$round"; gpu_workers qwen "$round" "$QWEN"; fi
+  if [ "$qwen" -gt 0 ]; then stage "qwen r$round"; gpu_workers qwen "$round" "$QWEN" --max-output-tokens "$QWEN_MAX"; fi
   if [ "$queen" -eq 0 ] && [ "$qwen" -eq 0 ]; then
     stage "final advance r$round"
     $PY -m explain.pilot --config $CFG advance --yes

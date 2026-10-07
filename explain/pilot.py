@@ -143,8 +143,17 @@ class Pilot:
 
     # --------------------------------------------------------------- texts
 
-    def writer_text(self, raw: str, fen: str) -> dict:
-        """A writer's absolute-token output -> Queen-vocabulary views."""
+    def writer_text(self, raw: str, fen: str, cut_off: bool = False) -> dict:
+        """A writer's absolute-token output -> Queen-vocabulary views.
+
+        Unlike a Queen generation, a writer's output must contain an ANALYSIS
+        field; text without one (e.g. thinking cut off at the token limit) is
+        never treated as prose.
+        """
+        if cut_off:
+            return {"ok": False, "error": "cut off at token limit", "raw": raw}
+        if "ANALYSIS:" not in raw:
+            return {"ok": False, "error": "no ANALYSIS field", "raw": raw}
         try:
             pov = absolute_to_queen(raw, fen)
         except ValueError as error:
@@ -174,7 +183,8 @@ class Pilot:
         row = self.llm.store.get(self.llm.key(**{k: request[k] for k in ("model", "system", "user", "tag")}))
         if row is None or row.get("error"):
             return None
-        text = self.writer_text(row["text"], fen)
+        text = self.writer_text(row["text"], fen,
+                                row.get("stop_reason") in ("max_tokens", "length"))
         if text["ok"]:
             text["heads"] = parse_heads(fen, self.generation(fen))  # hybrid R4 = hybrid prose + Queen heads
         return text
@@ -226,6 +236,14 @@ class Pilot:
                     "system": system, "user": user}
         return {"model": model, "system": system, "user": user, "tag": tag}
 
+    def qwen_pending(self, key: str) -> bool:
+        """Unanswered, or cut off under a smaller output budget than the current one."""
+        row = self.qwen.get(key)
+        if row is None:
+            return True
+        return (row.get("finish_reason") == "length"
+                and row.get("max_output_tokens", 8192) < self.cfg.get("qwen_max_output_tokens", 24576))
+
     def writer_output(self, request: dict | None, fen: str) -> dict | None:
         if request is None:
             return None
@@ -236,7 +254,8 @@ class Pilot:
                                                   request["user"], None, request["tag"]))
         if row is None or row.get("error"):
             return None
-        return self.writer_text(row["text"], fen)
+        cut_off = row.get("finish_reason") == "length" or row.get("stop_reason") in ("max_tokens", "length")
+        return self.writer_text(row["text"], fen, cut_off)
 
     def root_texts(self, position: dict) -> dict[str, dict]:
         """Every root-level text for the depth axis, keyed by text id."""
@@ -365,7 +384,9 @@ class Pilot:
                                   "effort": effort})
             for rung, text_id in (("R1", "q/d1/qwen/prose"), ("R2", "q/d1/qwen/prose"),
                                   ("R3", "q/d1/minimax"), ("R4", "q/d1/qwen/full")):
-                if roots.get(text_id, {}).get("ok"):
+                text = roots.get(text_id, {})
+                needs = ("heads",) if rung == "R3" else ("prose", "heads") if rung == "R4" else ("prose",)
+                if text.get("ok") and all(text.get(k) for k in needs):
                     cells.append({"kind": "chooser", "rung": rung, "text": text_id, "agent": model})
             if model == self.judge:
                 for text_id, text in roots.items():
@@ -612,7 +633,7 @@ class Pilot:
             self.run_api(writers, "writers", yes)
             self.reset()
             qwen, _ = self.writer_requests()
-        qwen = [r for r in qwen if r["key"] not in self.qwen]
+        qwen = [r for r in qwen if self.qwen_pending(r["key"])]
         queen = self.queen_requests()  # after writers: Queen also reads their texts
         if queen:
             self.gpu_hint("queen", queen)

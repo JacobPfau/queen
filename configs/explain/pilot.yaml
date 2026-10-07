@@ -16,6 +16,8 @@ oracle_workers: 32
 queen_model: /local/models/queen_pawn-8
 queen_prompt: "Analyze the position carefully and find the best move for player."
 qwen_model: /local/models/Qwen3.8-27B
+# Qwen's thinking can run long: 26% of consolidations hit an 8192-token cap.
+qwen_max_output_tokens: 24576
 
 max_api_spend_usd: 1500
 # In-flight API calls per model. Anthropic allows 2M output tokens/min per
@@ -24,7 +26,7 @@ max_api_spend_usd: 1500
 api_concurrency:
   opus: 128
   sonnet: 128
-  flash: 64
+  flash: 32   # OpenRouter caps gemini-3.8-flash at 300 requests/min across all users
 
 # Opus and Sonnet go direct to Anthropic; Flash goes through OpenRouter, whose
 # reasoning.effort maps to Gemini's thinking level. Prices checked 2026-10-07.

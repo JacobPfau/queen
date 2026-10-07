@@ -10,6 +10,7 @@ contaminate the arm, so refusals are recorded as failures instead.
 from __future__ import annotations
 
 import os
+import random
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -200,7 +201,7 @@ class Caller:
                 "gemini": self._gemini}[spec.provider]
         started = time.time()
         last_error = None
-        for attempt in range(3):
+        for attempt in range(6):
             try:
                 result = call(spec, effort, system, user, max_tokens)
                 break
@@ -211,7 +212,8 @@ class Caller:
                 status = getattr(error, "status_code", None) or getattr(error, "code", None)
                 if isinstance(status, int) and 400 <= status < 500 and status != 429:
                     break  # bad key, bad request: retrying cannot help
-                time.sleep(5 * (attempt + 1))
+                # Exponential backoff with jitter (rate limits are per minute).
+                time.sleep(min(60, 5 * 2 ** attempt) * (0.75 + 0.5 * random.random()))
         else:
             # Persist the failure (zero cost) so analysis can count it.
             return self.store.put(key, {

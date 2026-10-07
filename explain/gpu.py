@@ -32,12 +32,21 @@ from datagen.self_distill.consolidation import strip_thinking
 from explain.common import Store, read_jsonl
 
 
-def pending(requests_path: Path, store: Store, shard: int = 0, num_shards: int = 1) -> list[dict]:
-    """Unanswered requests in this worker's shard (requests split by key hash)."""
+def pending(requests_path: Path, store: Store, shard: int = 0, num_shards: int = 1,
+            max_output_tokens: int | None = None) -> list[dict]:
+    """Unanswered requests in this worker's shard (requests split by key hash).
+
+    An answer that was cut off at its token limit is redone when the worker now
+    allows more output tokens than it had.
+    """
     rows = read_jsonl(requests_path)
     seen, todo = set(), []
     for row in rows:
-        if row["key"] in store or row["key"] in seen:
+        done = store.get(row["key"])
+        redo = (done is not None and max_output_tokens is not None
+                and done.get("finish_reason") == "length"
+                and done.get("max_output_tokens", 8192) < max_output_tokens)
+        if (done is not None and not redo) or row["key"] in seen:
             continue
         if int(hashlib.md5(row["key"].encode()).hexdigest(), 16) % num_shards != shard:
             continue
@@ -68,7 +77,8 @@ def queen_generator(args):
 
 def run_queen(args) -> None:
     store = Store(args.store)
-    todo = pending(args.requests, store, args.shard, args.num_shards)
+    main = Store(args.main_store) if args.main_store else store
+    todo = pending(args.requests, main, args.shard, args.num_shards)
     print(f"[queen] {len(todo)} pending requests", flush=True)
     if not todo:
         return
@@ -110,8 +120,10 @@ def run_queen(args) -> None:
 def run_qwen(args) -> None:
     from vllm import LLM, SamplingParams
     store = Store(args.store)
-    todo = pending(args.requests, store, args.shard, args.num_shards)
-    print(f"[qwen] {len(todo)} pending requests", flush=True)
+    # The worker's store is a fresh shard file; earlier answers are in the main store.
+    main = Store(args.main_store) if args.main_store else store
+    todo = pending(args.requests, main, args.shard, args.num_shards, args.max_output_tokens)
+    print(f"[qwen] {len(todo)} pending requests (max_output_tokens={args.max_output_tokens})", flush=True)
     if not todo:
         return
     # Same inference settings as the self-distill consolidation recipe.
@@ -145,6 +157,7 @@ def run_qwen(args) -> None:
                 "output_tokens": len(completion.token_ids),
                 "input_tokens": len(output.prompt_token_ids),
                 "finish_reason": completion.finish_reason,
+                "max_output_tokens": args.max_output_tokens,
                 "batch_seconds": seconds,
                 "batch_size": len(chunk),
             })
@@ -161,7 +174,9 @@ def main() -> None:
     parser.add_argument("--chunk", type=int, default=256)
     parser.add_argument("--temperature", type=float, default=0.6)
     parser.add_argument("--max-model-len", type=int, default=None)
-    parser.add_argument("--max-output-tokens", type=int, default=8192)
+    parser.add_argument("--max-output-tokens", type=int, default=24576)
+    parser.add_argument("--main-store", type=Path,
+                        help="store holding earlier answers, when --store is a shard file")
     parser.add_argument("--gpu-memory-utilization", type=float, default=None)
     parser.add_argument("--tensor-parallel", type=int, default=1)
     parser.add_argument("--shard", type=int, default=0, help="this worker's shard (one per GPU)")
@@ -174,7 +189,7 @@ def main() -> None:
             parser.error("--prompt is required for queen")
         run_queen(args)
     else:
-        args.max_model_len = args.max_model_len or 16384
+        args.max_model_len = args.max_model_len or 32768
         args.gpu_memory_utilization = args.gpu_memory_utilization or 0.92
         run_qwen(args)
 
