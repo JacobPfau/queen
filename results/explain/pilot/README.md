@@ -5,7 +5,7 @@
 - **Flash can replace Opus in most roles.** It matches Opus to within about 1 point of regret everywhere, at about a quarter of the cost.
 - **Except writing explanations.** When Flash writes prose, it adds factual chess errors. Keep Opus for that role.
 - **Drop Sonnet.** It is about 2 points worse than both, which is outside the noise.
-- **The LLMs rarely beat Queen on its own.** Opus given all of Queen's analysis lost 2.35 points; playing Queen's own best move lost 1.9.
+- **The LLMs rarely beat Queen on its own.** Picking directly, Opus given all of Queen's analysis lost 2.35 points; playing Queen's own best move lost 1.9. With a one-move search, the best LLM condition (1.17) only ties Queen's own evaluations (1.39) within noise.
 - **Caveat:** one run, 100 positions. Single-cell differences under about 2 points are noise.
 
 "Points" means regret: the win-rate percentage points lost compared with Stockfish's best move. Lower is better.
@@ -26,7 +26,8 @@
 | **Queen** | PAWN-8, the QUEEN paper's final chess model (arXiv 2610.03695). It writes prose analysis followed by structured conclusions. |
 | **Queen's conclusions** | Its best move, critical line and evaluation (the structured fields after the prose). |
 | **Input levels** | What a model is given from Queen: nothing; Queen's ranking of candidate moves; Queen's prose; Queen's conclusions; prose plus conclusions. |
-| **Picks the move** | An LLM given the board and an input level answers with a move directly. |
+| **Picks the move** | An LLM given the board and an input level answers with a move directly. No search. |
+| **One-move search** | A reader judges each of the three positions reached by Queen's top three candidate moves; the search plays the move leading to the best-valued one. |
 | **Reader** | An LLM that turns a text into move probabilities and a win estimate, which a search then uses. |
 | **Consolidator** | Merges Queen's analyses of the three child positions into one root analysis. |
 | **Hybrid prose** | Prose written by an LLM to explain Queen's conclusions (a control for whether Queen's own prose adds anything). |
@@ -103,7 +104,9 @@
 
 Indicative only: one run, mostly within noise.
 
-**1. Each level of Queen input helped Opus pick better moves.**
+**1. Without search, each level of Queen input helped Opus pick better moves.**
+
+Opus names a move in one call from the board plus Queen's analysis of the position itself:
 
 | Opus is given | Regret |
 |---|---|
@@ -115,21 +118,42 @@ Indicative only: one run, mostly within noise.
 
 Most of the gain comes from the conclusions.
 
-**2. But the LLMs rarely improved on Queen alone.**
-- Opus with everything: 2.35. Queen's best move played directly: 1.9.
-- So far the LLMs add noise to Queen's choices more often than they fix them. This is the main thing the full experiment has to explain.
+**2. With a one-move search, Queen's text helps more, and the gap to Queen narrows.**
 
-**3. Looking one move ahead helped.**
-- Opus reading a depth-1 consolidation: 1.45–2.45 (depending on the consolidator), against 2.35 at depth 0.
+A reader judges each child position (after one of Queen's top three moves) from the text below; the search plays the best child:
+
+| Each child position is judged from | Opus | Flash | Queen as reader | No LLM |
+|---|---|---|---|---|
+| Board only (no Queen text) | 3.86 | 6.49 | – | – |
+| Queen's prose | 3.63 | 2.22 | **1.43** | – |
+| Queen's prose + conclusions | 1.76 | 1.45 | – | – |
+| Hybrid prose (Opus-written) + conclusions | **1.17** | – | – | – |
+| Queen's own evaluations (best of 3) | – | – | – | **1.39** |
+| Hand-crafted evaluation | – | – | – | 3.58 |
+
+- **Search helps once Queen's text is involved:** Opus with prose + conclusions goes from 2.35 (picking directly) to 1.76.
+- **Best LLM result in the pilot:** Opus reading hybrid prose + conclusions, 1.17.
+- **Part of the gain is Queen's shortlist:** the search only chooses among Queen's top three moves. The hand-crafted evaluation alone improves from 5.0 over all moves to 3.58 over those three.
+- **Hiding the board helps here too:** Opus judging from Queen's prose goes from 3.63 to 2.19 without the board.
+
+**3. The LLMs rarely improved on Queen alone.**
+- Without search, Opus with everything: 2.35. Queen's best move played directly: 1.9.
+- With search, Queen reading its own prose (1.43) and Queen's own evaluations (1.39) match or beat every LLM condition except Opus on hybrid prose (1.17), and that gap is within noise.
+- A third mode, a reader reporting which move Queen's root analysis supports (no search): Opus scores 2.29 from prose and 1.90 from prose + conclusions, the same as Queen's own best move, because it passes Queen's choice through.
+- So far the LLMs add noise to Queen's choices about as often as they fix them. This is the main thing the full experiment has to explain.
+
+**4. Reading a consolidation of one move ahead helped.**
+- Opus picking from a depth-1 consolidation: 1.45–2.45 (depending on the consolidator), against 2.35 at depth 0.
 - Queen's own evaluations one move deep: 1.4, the best result in the pilot.
 - A rewrite of the depth-0 analysis alone scored 1.9–2.9, so the gain comes from the extra analysis, not from the editing.
 
-**4. Hiding the board often helped.**
+**5. Hiding the board often helped.**
 - Without the board, models deferred to Queen more.
-- Opus with Queen's prose: 3.68 → 2.90. Opus with Queen's conclusions: 2.57 → 1.90. Sonnet with Queen's conclusions: 4.86 → 2.33.
+- Picking directly: Opus with Queen's prose 3.68 → 2.90; Opus with Queen's conclusions 2.57 → 1.90; Sonnet with Queen's conclusions 4.86 → 2.33.
+- With search: Opus judging from Queen's prose 3.63 → 2.19.
 - The current decision is to always show the board, so this is flagged for review.
 
-**5. Higher effort didn't reliably help** any model.
+**6. Higher effort didn't reliably help** any model.
 
 ## Problems found and fixed
 
@@ -156,7 +180,7 @@ The pilot doubled as a debugging run. Each problem was caught by its health coun
 
 **Need your decision:**
 - **Model roles:** Flash for reading, picking and consolidating; Opus for hybrid prose; Sonnet dropped.
-- **The board:** keep always showing it, or revisit in light of finding 4.
+- **The board:** keep always showing it, or revisit in light of finding 5.
 
 **Ready to do:**
 - **Writer prompt:** tighten it so writers stop adding plans and evaluative language.
